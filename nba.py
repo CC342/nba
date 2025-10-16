@@ -27,7 +27,6 @@ def send_telegram(msg):
     requests.get(url, params={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
 
 def send_wechat(msg):
-    # 获取access_token
     token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WX_CORP_ID}&corpsecret={WX_SECRET}"
     r = requests.get(token_url).json()
     access_token = r.get("access_token")
@@ -125,7 +124,8 @@ def fetch_stream_links(match_url, target_name="sheri"):
                         seen.add(url)
     return links
 
-def fetch_m3u8(url):
+# ===== 并行获取 m3u8（保持顺序） =====
+def fetch_m3u8_single(url):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
         context = browser.new_context()
@@ -137,6 +137,16 @@ def fetch_m3u8(url):
         m3u8_list = re.findall(r'https?://[^\s\'"<>]+\.m3u8[^\s\'"<>]*', content)
         m3u8_list = [u for u in set(m3u8_list) if "?md5=" in u or "?expires=" in u]
         return m3u8_list
+
+def fetch_m3u8(urls):
+    if isinstance(urls, str):
+        urls = [urls]
+    results = [None] * len(urls)
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
+        futures = [executor.submit(fetch_m3u8_single, url) for url in urls]
+        for idx, future in enumerate(futures):
+            results[idx] = future.result()
+    return results
 
 def parse_match_name(raw_name):
     name = raw_name.replace("Match Started", "").strip()
@@ -151,55 +161,62 @@ def parse_match_name(raw_name):
 def main():
     match_started, final_matches, from_now_matches = fetch_home_matches()
 
-    # 初始化推送内容
     push_msg = ""
 
-    # Match Started
+    # === Match Started ===
     print(f"{GREEN}Match Started 比赛数: {len(match_started)}{RESET}")
     push_msg += f"Match Started 比赛数: {len(match_started)}\n"
+
+    # 收集所有比赛第一个 stream 链接
+    match_stream_map = {}
     for i, m in enumerate(match_started, 1):
         team1, team2 = parse_match_name(m['raw_name'])
-        print(f"{i}. {team1} — {team2}")
-
         stream_links = fetch_stream_links(m['url'], target_name="sheri")
-        if not stream_links:
-            print(f"   {RED}未找到 sheri 地址{RESET}")
-            continue
+        if stream_links:
+            match_stream_map[i] = {"teams": f"{team1} — {team2}", "url": stream_links[0]}
+        else:
+            print(f"{i}. {team1} — {team2}   {RED}未找到 sheri 地址{RESET}")
 
-        m3u8s = fetch_m3u8(stream_links[0])
+    # 并行获取 m3u8（顺序保持和比赛一致）
+    urls_to_fetch = [info["url"] for info in match_stream_map.values()]
+    all_m3u8_lists = fetch_m3u8(urls_to_fetch)
+
+    # 输出和匹配每场比赛
+    for idx, (i, info) in enumerate(match_stream_map.items(), 1):
+        teams = info["teams"]
+        m3u8s = all_m3u8_lists[idx-1] if idx-1 < len(all_m3u8_lists) else []
         if not m3u8s:
-            print(f"   {RED}未找到 m3u8 地址{RESET}")
+            print(f"{i}. {teams}   {RED}未找到 m3u8 地址{RESET}")
             continue
-
+        print(f"{i}. {teams}")
         for url in m3u8s:
             print(f"   {GREEN}{url}{RESET}")
-            push_msg += f"{i}. {team1} — {team2}\n{url}\n"
-    
-    print()
+            push_msg += f"{i}. {teams}\n{url}\n"
+
+    print("\n")
     push_msg += "\n"
 
-    # Final
+    # === Final ===
     print(f"{RED}Final 比赛数: {len(final_matches)}{RESET}")
     push_msg += f"Final 比赛数: {len(final_matches)}\n"
     for i, m in enumerate(final_matches, 1):
         print(f"{i}. {m['name']}")
         push_msg += f"{i}. {m['name']}\n"
 
-    print()
+    print("\n")
     push_msg += "\n"
 
-   # From Now
+    # === From Now ===
     print(f"{YELLOW}From Now 比赛数: {len(from_now_matches)}{RESET}")
     push_msg += f"From Now 比赛数: {len(from_now_matches)}\n"
     for i, m in enumerate(from_now_matches, 1):
         print(f"{i}. {m['name']}")
         push_msg += f"{i}. {m['name']}\n"
 
-    # 一次性推送
+    # 推送
     if push_msg:
         send_telegram(push_msg)
         send_wechat(push_msg)
 
 if __name__ == "__main__":
     main()
-
