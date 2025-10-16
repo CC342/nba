@@ -1,12 +1,14 @@
 #!/bin/bash
 
-WX_SCRIPT="wx.py"
-TG_SCRIPT="nbabot.py"
+# 固定脚本目录
+BASE_DIR="/home/nba"
+WX_SCRIPT="$BASE_DIR/wx.py"
+TG_SCRIPT="$BASE_DIR/nbabot.py"
 
 # 获取单个 PID（取第一个）
 get_pid() {
     local script=$1
-    pid=$(pgrep -f "$script" | head -n1)
+    pid=$(pgrep -f "$(basename "$script")" | head -n1)
     echo "$pid"
 }
 
@@ -36,13 +38,13 @@ start_script() {
     if [ -n "$pid" ]; then
         echo -e "$script 已经在运行 (PID: $pid)"
     else
-        nohup python3 "$script" >/dev/null 2>&1 &
+        nohup python3 "$script" >"$BASE_DIR/$(basename "$script").log" 2>&1 &
         sleep 1
         pid=$(get_pid "$script")
         if [ -n "$pid" ]; then
             echo -e "$script 启动成功 (PID: $pid)"
         else
-            echo -e "$script 启动失败"
+            echo -e "$script 启动失败，查看日志: $BASE_DIR/$(basename "$script").log"
         fi
     fi
 }
