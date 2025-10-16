@@ -59,17 +59,14 @@ def wechat_callback():
             content = xml_tree.find('Content').text.strip()
             logging.info(f"收到文本消息: {content}")
 
-            # 如果消息是 "nba"，执行 nba.py 并获取输出
+            # 如果消息是 "nba"，直接执行 nba.py，不捕获输出
             if content.lower() == "nba":
                 try:
-                    result = subprocess.check_output(["python3", "/home/nba/nba.py"], stderr=subprocess.STDOUT)
-                    reply = result.decode("utf-8")
+                    subprocess.Popen(["python3", "/home/nba/nba.py"])
+                    logging.info("已触发 nba.py 执行")
                 except Exception as e:
-                    reply = f"执行失败: {e}"
-                logging.info(f"执行 nba.py 输出: {reply}")
+                    logging.error(f"执行 nba.py 失败: {e}")
 
-                # 这里可以使用企业微信发送消息 API 将结果推送给自己
-                # 简单起见，Flask 直接返回 success
         else:
             logging.info(f"收到非文本消息，类型: {msg_type}")
 
