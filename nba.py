@@ -141,6 +141,8 @@ def fetch_m3u8_single(url):
 def fetch_m3u8(urls):
     if isinstance(urls, str):
         urls = [urls]
+    if not urls:  # ✅ 没有URL时直接返回空列表                                           
+        return []
     results = [None] * len(urls)
     with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
         futures = [executor.submit(fetch_m3u8_single, url) for url in urls]
