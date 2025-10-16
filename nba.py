@@ -54,25 +54,39 @@ def format_final_name(raw_text):
         score2 = m.group(4)
         return f"{team1} {score1} — {score2} {team2}"
     return clean_text.title()
-
+    
 def format_from_now_name(raw_text):
-    time_match = re.search(r'(\d+)\s*hours?\s*and\s*(\d+)\s*minutes? from now', raw_text.lower())
-    if time_match:
-        hours = int(time_match.group(1))
-        minutes = int(time_match.group(2))
-        time_str = f"{hours:02d}:{minutes:02d} Later"
-    else:
-        day_match = re.search(r'(\d+)\s*day[s]? from now', raw_text.lower())
-        if day_match:
-            days = int(day_match.group(1))
-            time_str = f"{days*24}:00 Later"
-        else:
-            time_str = ""
+    raw_lower = raw_text.lower()
+    
+    # 定义匹配模式和对应格式化函数
+    patterns = [
+        (r'(\d+)\s*hours?\s*and\s*(\d+)\s*minutes? from now', lambda h, m: f"{int(h):02d}:{int(m):02d} Later"),
+        (r'(\d+)\s*hours? from now', lambda h: f"{int(h):02d}:00 Later"),
+        (r'(\d+)\s*minutes? from now', lambda m: f"00:{int(m):02d} Later"),
+        (r'(\d+)\s*day[s]? from now', lambda d: f"{int(d)*24}:00 Later"),
+    ]
 
-    teams_text = re.sub(r'\d+\s*hours?\s*and\s*\d+\s*minutes?\s*from now', '', raw_text, flags=re.I)
-    teams_text = re.sub(r'\d+\s*day[s]? from now', '', teams_text, flags=re.I).strip()
-    teams = re.findall(r'(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s(?:[A-Z][a-z]+|[A-Z]{2,}))*', teams_text)
+    time_str = ""
+    for pattern, func in patterns:
+        match = re.search(pattern, raw_lower)
+        if match:
+            time_str = func(*match.groups())
+            break
 
+    # 清理时间信息，剔除含“from now”的时间表达
+    time_patterns = [
+        r'\d+\s*hours?\s*and\s*\d+\s*minutes?\s*from now',
+        r'\d+\s*hours?\s*from now',
+        r'\d+\s*minutes?\s*from now',
+        r'\d+\s*day[s]? from now'
+    ]
+    teams_text = raw_text
+    for pat in time_patterns:
+        teams_text = re.sub(pat, '', teams_text, flags=re.I)
+    teams_text = teams_text.strip()
+
+    # 提取队伍名称（用原始文本提高准确率）
+    teams = re.findall(r'(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s(?:[A-Z][a-z]+|[A-Z]{2,}))*', raw_text)
     if len(teams) >= 2:
         return f"{time_str}  {teams[0]} 🆚 {teams[1]}"
     return f"{time_str}  {teams_text}"
