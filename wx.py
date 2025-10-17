@@ -16,6 +16,31 @@ crypto = WXBizMsgCrypt(TOKEN, ENCODING_AES_KEY, CORP_ID)
 
 logging.basicConfig(level=logging.DEBUG)
 
+@app.route('/proxy')
+def hls_proxy():
+    import requests
+    import urllib.parse
+
+    # 获取 URL 参数
+    url = request.args.get('url')
+    if not url:
+        return "Missing url", 400
+
+    # URL decode（防止特殊字符出错）
+    url = urllib.parse.unquote(url)
+
+    # 把 index.m3u8 替换为 tracks-v1a1/mono.ts.m3u8
+    url_modified = url.replace("index.m3u8", "tracks-v1a1/mono.ts.m3u8")
+    print(f"[HLS Proxy] 原始: {url} -> 修改: {url_modified}")
+
+    # 请求远程 m3u8/ts
+    headers = {
+        "Referer": "https://embedsports.top/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36"
+    }
+    resp = requests.get(url_modified, headers=headers, stream=True)
+    return resp.content, resp.status_code, resp.headers.items()
+
 # 路由改成 /wechat_callback，与企业微信后台保持一致
 @app.route('/wechat_callback', methods=['GET', 'POST'])
 def wechat_callback():
@@ -75,5 +100,4 @@ def wechat_callback():
 
 if __name__ == '__main__':
     # 使用 0.0.0.0 允许公网访问
-    app.run(host='0.0.0.0', port=5000, debug=True)
-
+    app.run(host='0.0.0.0', port=5000, ssl_context=('/etc/ssl/certs/imeet.crt', '/etc/ssl/private/imeet.key'), debug=True, threaded=True)
