@@ -10,7 +10,7 @@ BASE_URL = "https://www.nbabite.is/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 # 代理配置，给Sportsbest的m3u8地址添加代理前缀
-PROXY_HOST = "https://nba.imeet.eu.org"
+PROXY_HOST = "代理地址"
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 
 # 终端颜色输出
