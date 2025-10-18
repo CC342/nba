@@ -13,7 +13,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 )
 # 代理地址（域名+端口+proxy路径）
-PROXY_HOST = "https://nba.imeet.eu.org"
+PROXY_HOST = "代理地址"
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 # -------------------------------------------
 
