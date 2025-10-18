@@ -11,7 +11,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 WAIT_AFTER_LOAD_MS = 1000  # 页面加载后等待JS生成m3u8链接时间（毫秒）
 
 # 代理配置，用于Sportsbest m3u8代理访问
-PROXY_HOST = "https://nba.imeet.eu.org"
+PROXY_HOST = "代理地址"
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 
 # 彩色终端输出
