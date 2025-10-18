@@ -214,7 +214,7 @@ def main():
         team1, team2 = parse_match_name(m['raw_name'])
         sportsbest_url = fetch_sportsbest_url(m['url'])
         sportsbest_m3u8 = []
-        if sportsbest_url:
+    if sportsbest_url:
             sportsbest_m3u8 = fetch_sportsbest_m3u8_with_proxy(sportsbest_url)
         return i, team1, team2, sportsbest_m3u8
 
@@ -238,13 +238,17 @@ def main():
         else:
             print(f"  {RED}未找到m3u8地址{RESET}")
             push_msg += "  未找到m3u8地址\n"
-
+    
+    push_msg += "\n"
+    
     print(f"\n{RED}Final 比赛数: {len(final_matches)}{RESET}")
     push_msg += f"Final 比赛数: {len(final_matches)}\n"
     for i, m in enumerate(final_matches, 1):
         print(f"{i}. {m['name']}")
         push_msg += f"{i}. {m['name']}\n"
 
+    push_msg += "\n"
+    
     print(f"\n{YELLOW}From Now 比赛数: {len(from_now_matches)}{RESET}")
     push_msg += f"From Now 比赛数: {len(from_now_matches)}\n"
     for i, m in enumerate(from_now_matches, 1):
