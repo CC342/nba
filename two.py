@@ -20,12 +20,12 @@ GREEN = "\033[1;92m"
 YELLOW = "\033[1;93m"
 RESET = "\033[0m"
 
-# Telegram/企业微信配置，请替换成您自己的token和id
-TELEGRAM_BOT_TOKEN = "1864911909:AAE4vhlfdFn7aHX57TZioe6BImeDstCWYLA"
-TELEGRAM_CHAT_ID = "856601829"
-WX_CORP_ID = "wwee932559bcea72cc"
-WX_AGENT_ID = "1000003"
-WX_SECRET = "SgMMexlVwa9HRov7FMNORY6Kv3dKoDFVkEQE1hYpDls"
+# TG / 企业微信配置
+TELEGRAM_BOT_TOKEN = "你的token"
+TELEGRAM_CHAT_ID = "聊天id"
+WX_CORP_ID = "企业微信id"
+WX_AGENT_ID = "应用id"
+WX_SECRET = "密钥"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
