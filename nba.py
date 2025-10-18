@@ -52,12 +52,12 @@ def format_final_name(raw_text):
     pattern = re.compile(r"([A-Za-z\s]*76ers[A-Za-z\s]*|[A-Za-z\s]+)\s*(\d+)\s*([A-Za-z\s]*76ers[A-Za-z\s]*|[A-Za-z\s]+)\s*(\d+)", re.I)
     m = pattern.search(clean_text)
     if m:
-        team1 = m.group(1).strip().title()
+        team1 = m.group(1).strip()
         score1 = m.group(2)
-        team2 = m.group(3).strip().title()
+        team2 = m.group(3).strip()
         score2 = m.group(4)
         return f"{team1} {score1} — {score2} {team2}"
-    return clean_text.title()
+    return clean_text
 
 def format_from_now_name(raw_text):
     raw_lower = raw_text.lower()
