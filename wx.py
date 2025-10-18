@@ -100,4 +100,4 @@ def wechat_callback():
 
 if __name__ == '__main__':
     # 使用 0.0.0.0 允许公网访问
-    app.run(host='0.0.0.0', port=5000, ssl_context=('/etc/ssl/certs/imeet.crt', '/etc/ssl/private/imeet.key'), debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
