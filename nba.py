@@ -5,12 +5,22 @@ from playwright.sync_api import sync_playwright, TimeoutError
 import re
 from concurrent.futures import ThreadPoolExecutor
 import time
+from dotenv import load_dotenv
+import os
 
 BASE_URL = "https://www.nbabite.is/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+load_dotenv()  # 加载 .env 文件
+
+PROXY_HOST = os.getenv("PROXY_HOST")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+WX_CORP_ID = os.getenv("WX_CORP_ID")
+WX_AGENT_ID = os.getenv("WX_AGENT_ID")
+WX_SECRET = os.getenv("WX_SECRET")
+
 # 代理配置，给Sportsbest的m3u8地址添加代理前缀
-PROXY_HOST = "代理地址"
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 
 # 终端颜色输出
@@ -18,13 +28,6 @@ RED = "\033[1;91m"
 GREEN = "\033[1;92m"
 YELLOW = "\033[1;93m"
 RESET = "\033[0m"
-
-# TG / 企业微信配置
-TELEGRAM_BOT_TOKEN = "你的token"
-TELEGRAM_CHAT_ID = "聊天id"
-WX_CORP_ID = "企业微信id"
-WX_AGENT_ID = "应用id"
-WX_SECRET = "密钥"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
