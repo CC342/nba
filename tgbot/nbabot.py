@@ -1,9 +1,13 @@
 import subprocess
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from dotenv import load_dotenv
+import os
 
-# === 替换成你的 Bot Token ===
-TELEGRAM_BOT_TOKEN = "你的的token"
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 
 # ======== 主要命令处理函数 ========
 async def run_nba(update: Update, context: ContextTypes.DEFAULT_TYPE):
