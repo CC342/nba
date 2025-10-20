@@ -157,7 +157,6 @@ python3 nba.py
 | --------------- | --------------- |
 | `wx.py.log`     | 企业微信 Bot 日志     |
 | `nbabot.py.log` | Telegram Bot 日志 |
-| `nba.py.log`    | 核心抓取脚本日志（如有设置）  |
 
 示例日志：
 
