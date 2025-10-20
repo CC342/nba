@@ -1,18 +1,30 @@
 #!/bin/bash
 
+# ===============================
+# NBA Bot 管理脚本
+# ===============================
+
 # 固定脚本目录
 BASE_DIR="/home/nba"
-WX_SCRIPT="$BASE_DIR/wx.py"
-TG_SCRIPT="$BASE_DIR/nbabot.py"
+VENV_PY="$BASE_DIR/.venv/bin/python"  # 虚拟环境 python
+LOG_DIR="$BASE_DIR/logs"              # 日志目录
+mkdir -p "$LOG_DIR"
 
+WX_SCRIPT="$BASE_DIR/src/nba/wx/wx.py"
+TG_SCRIPT="$BASE_DIR/src/nba/tg/nbabot.py"
+
+# ===============================
 # 获取单个 PID（取第一个）
+# ===============================
 get_pid() {
     local script=$1
     pid=$(pgrep -f "$(basename "$script")" | head -n1)
     echo "$pid"
 }
 
-# 显示状态
+# ===============================
+# 显示脚本状态
+# ===============================
 show_status() {
     wx_pid=$(get_pid "$WX_SCRIPT")
     tg_pid=$(get_pid "$TG_SCRIPT")
@@ -31,25 +43,30 @@ show_status() {
     echo -e "======================================"
 }
 
+# ===============================
 # 启动脚本
+# ===============================
 start_script() {
     local script=$1
     pid=$(get_pid "$script")
+    log_file="$LOG_DIR/$(basename "$script").log"
     if [ -n "$pid" ]; then
         echo -e "$script 已经在运行 (PID: $pid)"
     else
-        nohup python3 "$script" >"$BASE_DIR/$(basename "$script").log" 2>&1 &
+        nohup "$VENV_PY" "$script" >"$log_file" 2>&1 &
         sleep 1
         pid=$(get_pid "$script")
         if [ -n "$pid" ]; then
-            echo -e "$script 启动成功 (PID: $pid)"
+            echo -e "$script 启动成功 (PID: $pid)，日志: $log_file"
         else
-            echo -e "$script 启动失败，查看日志: $BASE_DIR/$(basename "$script").log"
+            echo -e "$script 启动失败，查看日志: $log_file"
         fi
     fi
 }
 
+# ===============================
 # 停止脚本
+# ===============================
 stop_script() {
     local script=$1
     pid=$(get_pid "$script")
@@ -67,14 +84,16 @@ stop_script() {
     fi
 }
 
+# ===============================
 # 主循环
+# ===============================
 while true; do
     show_status
     echo "请选择操作："
-    echo "1) 启动 微信命令"
-    echo "2) 停止 微信命令"
-    echo "3) 启动 TG命令"
-    echo "4) 停止 TG命令"
+    echo "1) 启动 微信 Bot"
+    echo "2) 停止 微信 Bot"
+    echo "3) 启动 Telegram Bot"
+    echo "4) 停止 Telegram Bot"
     echo "5) 退出"
     read -p "输入选项 (1-5): " choice
     case $choice in
@@ -87,3 +106,4 @@ while true; do
     esac
     echo
 done
+
