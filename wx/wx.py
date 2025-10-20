@@ -3,13 +3,28 @@ from flask import Flask, request, make_response
 import subprocess
 import logging
 import xml.etree.ElementTree as ET
+import sys
+from dotenv import load_dotenv
+import os
+
+# 虚拟环境路径
+VENV_PATH = "/home/nba/.venv"
+
+# 激活虚拟环境
+activate_this = os.path.join(VENV_PATH, "bin/activate_this.py")
+if os.path.exists(activate_this):
+    with open(activate_this) as f:
+        exec(f.read(), dict(__file__=activate_this))
+else:
+    print(f"警告: 找不到虚拟环境: {VENV_PATH}", file=sys.stderr)
 
 app = Flask(__name__)
 
-# 企业微信开发者接口配置
-TOKEN = "企业微信应用——接收消息——启用api"
-ENCODING_AES_KEY = "企业微信应用——接收消息——启用api"
-CORP_ID = "企业微信id"
+load_dotenv()
+
+TOKEN = os.getenv("WX_TOKEN")
+ENCODING_AES_KEY = os.getenv("WX_ENCODING_AES_KEY")
+CORP_ID = os.getenv("WX_CORP_ID")
 
 # 初始化加解密类
 crypto = WXBizMsgCrypt(TOKEN, ENCODING_AES_KEY, CORP_ID)
@@ -87,7 +102,7 @@ def wechat_callback():
             # 如果消息是 "nba"，直接执行 nba.py，不捕获输出
             if content.lower() == "nba":
                 try:
-                    subprocess.Popen(["python3", "/home/nba/nba.py"])
+                    subprocess.Popen(["python3", "/home/nba/src/nba/nba.py"])
                     logging.info("已触发 nba.py 执行")
                 except Exception as e:
                     logging.error(f"执行 nba.py 失败: {e}")
