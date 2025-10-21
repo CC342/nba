@@ -20,7 +20,7 @@ WX_CORP_ID = os.getenv("WX_CORP_ID")
 WX_AGENT_ID = os.getenv("WX_AGENT_ID")
 WX_SECRET = os.getenv("WX_SECRET")
 
-
+# 代理配置，给Sportsbest的m3u8地址添加代理前缀
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 
 # 终端颜色输出
