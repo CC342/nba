@@ -53,7 +53,7 @@ def hls_proxy():
         "Referer": "https://embedsports.top/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36"
     }
-    resp = requests.get(url_modified, headers=headers, stream=True)
+    resp = requests.get(url_modified, headers=headers, stream=True, verify="/etc/ssl/certs/ca-certificates.crt")
     return resp.content, resp.status_code, resp.headers.items()
 
 # 路由改成 /wechat_callback，与企业微信后台保持一致
