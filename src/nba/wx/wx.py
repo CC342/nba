@@ -29,7 +29,7 @@ CORP_ID = os.getenv("WX_CORP_ID")
 # 初始化加解密类
 crypto = WXBizMsgCrypt(TOKEN, ENCODING_AES_KEY, CORP_ID)
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 @app.route('/proxy')
 def hls_proxy():
