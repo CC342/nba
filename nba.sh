@@ -55,6 +55,7 @@ start_script() {
     if [ -n "$pid" ]; then
         echo -e "$script 已经在运行 (PID: $pid)"
     else
+        export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
         nohup "$VENV_PY" "$script" >"$log_file" 2>&1 &
         sleep 1
         pid=$(get_pid "$script")
