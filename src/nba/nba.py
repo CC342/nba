@@ -21,6 +21,7 @@ WX_AGENT_ID = os.getenv("WX_AGENT_ID")
 WX_SECRET = os.getenv("WX_SECRET")
 
 # 代理配置，给Sportsbest的m3u8地址添加代理前缀
+#PROXY_HOST = "https://nba.imeet.eu.org"
 PROXY_PREFIX = f"{PROXY_HOST}/proxy?url="
 
 # 终端颜色输出
@@ -28,6 +29,13 @@ RED = "\033[1;91m"
 GREEN = "\033[1;92m"
 YELLOW = "\033[1;93m"
 RESET = "\033[0m"
+
+# Telegram / 企业微信配置（请替换为您的真实配置）
+#TELEGRAM_BOT_TOKEN = "1864911909:AAFyDBYV7jgfyZdZHxp_r4OJNK7NInb1iOA"
+#TELEGRAM_CHAT_ID = "856601829"
+#WX_CORP_ID = "wwee932559bcea72cc"
+#WX_AGENT_ID = "1000003"
+#WX_SECRET = "SgMMexlVwa9HRov7FMNORY6Kv3dKoDFVkEQE1hYpDls"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -217,7 +225,7 @@ def main():
         team1, team2 = parse_match_name(m['raw_name'])
         sportsbest_url = fetch_sportsbest_url(m['url'])
         sportsbest_m3u8 = []
-    if sportsbest_url:
+        if sportsbest_url:
             sportsbest_m3u8 = fetch_sportsbest_m3u8_with_proxy(sportsbest_url)
         return i, team1, team2, sportsbest_m3u8
 
@@ -241,17 +249,17 @@ def main():
         else:
             print(f"  {RED}未找到m3u8地址{RESET}")
             push_msg += "  未找到m3u8地址\n"
-    
-    push_msg += "\n"
-    
+            
+    push_msg += "\n"  # 推送空行
+
     print(f"\n{RED}Final 比赛数: {len(final_matches)}{RESET}")
     push_msg += f"Final 比赛数: {len(final_matches)}\n"
     for i, m in enumerate(final_matches, 1):
         print(f"{i}. {m['name']}")
         push_msg += f"{i}. {m['name']}\n"
+        
+    push_msg += "\n"  # 推送空行
 
-    push_msg += "\n"
-    
     print(f"\n{YELLOW}From Now 比赛数: {len(from_now_matches)}{RESET}")
     push_msg += f"From Now 比赛数: {len(from_now_matches)}\n"
     for i, m in enumerate(from_now_matches, 1):
