@@ -5,7 +5,7 @@ import re
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ------------------- 配置 -------------------
-TARGET_URL = "https://gamestrend.net/u10-toronto-blue-jays-vs-seattle-mariners/"
+TARGET_URL = "https://gamestrend.net/f96-denver-nuggets-vs-golden-state-warriors/"
 MAX_WAIT = 3.5       # 总等待时间
 POLL_INTERVAL = 0.1  # 轮询间隔
 USER_AGENT = (
