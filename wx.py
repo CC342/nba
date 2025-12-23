@@ -1,5 +1,5 @@
 from WXBizMsgCrypt import WXBizMsgCrypt
-from flask import Flask, request, make_response，Response, stream_with_context
+from flask import Flask, request, make_response，Response
 import subprocess
 import logging
 import xml.etree.ElementTree as ET
@@ -24,6 +24,7 @@ logging.getLogger('werkzeug').setLevel(logging.DEBUG)
 def hls_proxy():
     import requests
     import urllib.parse
+
     # 1. 获取并解码 URL
     url = request.args.get('url')
     if not url:
@@ -31,9 +32,7 @@ def hls_proxy():
     
     url = urllib.parse.unquote(url)
 
-    # 2. 针对特定源的路径替换（保留你的逻辑）
-    # 注意：这里假设源只改路径，不需要改 host。如果源是相对路径，这里返回给播放器后，播放器会基于你的代理域名去拼，可能会出错。
-    # 如果源 m3u8 里面全是 http 开头的绝对路径，那么这里没问题。
+    # 2. 针对特定源的路径替换
     url_modified = url.replace("index.m3u8", "tracks-v1a1/mono.ts.m3u8")
     print(f"[HLS Direct] Requesting: {url_modified}")
 
@@ -44,46 +43,72 @@ def hls_proxy():
 
     try:
         # 3. 请求远程 m3u8
-        # stream=True 即使对于小文件也是个好习惯
+        # 注意：这里我们设定 stream=True，但对 m3u8 我们会读取 content
         r = requests.get(
             url_modified, 
             headers=headers, 
             stream=True, 
-            verify="/etc/ssl/certs/ca-certificates.crt", # 根据你的环境调整
+            verify="/etc/ssl/certs/ca-certificates.crt",
             timeout=10
         )
 
-        # 4. 【关键步骤】清洗 Headers
-        # requests 库会自动解压 gzip 内容，所以 r.content 是明文。
-        # 但 r.headers 里依然保留着 'Content-Encoding: gzip'。
-        # 如果把这个 header 透传给 iOS/VLC，播放器会以为这是压缩数据再次尝试解压，导致 -1015 错误。
-        
-        excluded_headers = [
-            'content-encoding', 
-            'content-length', 
-            'transfer-encoding', 
-            'connection', 
-            'keep-alive',
-            'proxy-authenticate', 
-            'proxy-authorization', 
-            'te', 
-            'trailers', 
-            'upgrade'
-        ]
-        
-        headers_to_return = []
-        for name, value in r.headers.items():
-            if name.lower() not in excluded_headers:
-                headers_to_return.append((name, value))
+        # 获取内容类型
+        content_type = r.headers.get('content-type', '')
 
-        # 5. 返回数据
-        # 使用 stream_with_context 确保在大并发下内存安全
-        return Response(
-            stream_with_context(r.iter_content(chunk_size=4096)),
-            status=r.status_code,
-            headers=headers_to_return,
-            content_type=r.headers.get('content-type', 'application/vnd.apple.mpegurl')
-        )
+        # =======================================================
+        # 4. 【核心修复】检测并清洗 M3U8
+        # =======================================================
+        if "mpegurl" in content_type or url_modified.endswith(".m3u8"):
+            # 强制读取文本内容（解决分块传输导致的解析延迟）
+            try:
+                content = r.content.decode('utf-8', errors='ignore')
+            except:
+                content = r.text
+
+            clean_lines = []
+            for line in content.splitlines():
+                line = line.strip()
+                # 过滤掉空行
+                if not line: 
+                    continue
+                # 过滤掉垃圾注释（源站的仓鼠图通常是用 ## 开头的）
+                if line.startswith("##"):
+                    continue
+                
+                clean_lines.append(line)
+
+            # 重新组合成干净的文本
+            clean_content = "\n".join(clean_lines)
+
+            # 显式返回，强制设置 Content-Type 和 CORS 头
+            return Response(
+                clean_content,
+                status=r.status_code,
+                mimetype="application/vnd.apple.mpegurl",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-cache"
+                }
+            )
+
+        # =======================================================
+        # 5. 非 M3U8 内容（万一有TS）直接透传
+        # =======================================================
+        else:
+            # 清洗 Headers 防止 -1015
+            excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+            headers_to_return = [
+                (k, v) for k, v in r.headers.items() 
+                if k.lower() not in excluded_headers
+            ]
+            
+            from flask import stream_with_context
+            return Response(
+                stream_with_context(r.iter_content(chunk_size=4096)),
+                status=r.status_code,
+                headers=headers_to_return,
+                content_type=content_type
+            )
 
     except Exception as e:
         print(f"Error: {e}")
