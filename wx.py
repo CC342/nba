@@ -1,5 +1,5 @@
 from WXBizMsgCrypt import WXBizMsgCrypt
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response，Response, stream_with_context
 import subprocess
 import logging
 import xml.etree.ElementTree as ET
@@ -24,27 +24,70 @@ logging.getLogger('werkzeug').setLevel(logging.DEBUG)
 def hls_proxy():
     import requests
     import urllib.parse
-
-    # 获取 URL 参数
+    # 1. 获取并解码 URL
     url = request.args.get('url')
     if not url:
         return "Missing url", 400
-
-    # URL decode（防止特殊字符出错）
+    
     url = urllib.parse.unquote(url)
 
-    # 把 index.m3u8 替换为 tracks-v1a1/mono.ts.m3u8
+    # 2. 针对特定源的路径替换（保留你的逻辑）
+    # 注意：这里假设源只改路径，不需要改 host。如果源是相对路径，这里返回给播放器后，播放器会基于你的代理域名去拼，可能会出错。
+    # 如果源 m3u8 里面全是 http 开头的绝对路径，那么这里没问题。
     url_modified = url.replace("index.m3u8", "tracks-v1a1/mono.ts.m3u8")
-    print(f"[HLS Proxy] 原始: {url} -> 修改: {url_modified}")
+    print(f"[HLS Direct] Requesting: {url_modified}")
 
-    # 请求远程 m3u8/ts
     headers = {
         "Referer": "https://embedsports.top/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36"
     }
-    resp = requests.get(url_modified, headers=headers, stream=True, verify="/etc/ssl/certs/ca-certificates.crt")
-    return resp.content, resp.status_code, resp.headers.items()
 
+    try:
+        # 3. 请求远程 m3u8
+        # stream=True 即使对于小文件也是个好习惯
+        r = requests.get(
+            url_modified, 
+            headers=headers, 
+            stream=True, 
+            verify="/etc/ssl/certs/ca-certificates.crt", # 根据你的环境调整
+            timeout=10
+        )
+
+        # 4. 【关键步骤】清洗 Headers
+        # requests 库会自动解压 gzip 内容，所以 r.content 是明文。
+        # 但 r.headers 里依然保留着 'Content-Encoding: gzip'。
+        # 如果把这个 header 透传给 iOS/VLC，播放器会以为这是压缩数据再次尝试解压，导致 -1015 错误。
+        
+        excluded_headers = [
+            'content-encoding', 
+            'content-length', 
+            'transfer-encoding', 
+            'connection', 
+            'keep-alive',
+            'proxy-authenticate', 
+            'proxy-authorization', 
+            'te', 
+            'trailers', 
+            'upgrade'
+        ]
+        
+        headers_to_return = []
+        for name, value in r.headers.items():
+            if name.lower() not in excluded_headers:
+                headers_to_return.append((name, value))
+
+        # 5. 返回数据
+        # 使用 stream_with_context 确保在大并发下内存安全
+        return Response(
+            stream_with_context(r.iter_content(chunk_size=4096)),
+            status=r.status_code,
+            headers=headers_to_return,
+            content_type=r.headers.get('content-type', 'application/vnd.apple.mpegurl')
+        )
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return f"Proxy Error: {str(e)}", 500
 
 # 路由改成 /wechat_callback，与企业微信后台保持一致
 @app.route('/wechat_callback', methods=['GET', 'POST'])
