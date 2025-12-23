@@ -9,7 +9,7 @@ app = Flask(__name__)
 # ================= 配置 =================
 HIDDEN_UPSTREAM = "https://gg.poocloud.in"
 # 你的 Tunnel 域名 (必须填写，用于重写 URL)
-MY_DOMAIN = "https://sports.imeet.eu.org" 
+MY_DOMAIN = "https://cloudflare.tunnle.com" 
 
 HEADERS = {
     "Referer": "https://embedsports.top/",
