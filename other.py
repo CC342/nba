@@ -62,4 +62,4 @@ def direct_proxy(subpath):
         return f"Error: {e}", 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=9000, threaded-True)
+    app.run(host='0.0.0.0', port=9000, threaded=True)
