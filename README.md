@@ -50,3 +50,74 @@
 ├── README.md             # 说明文档
 └── templates
     └── index.html        # 前端 HTML 页面 (iOS UI)
+
+```
+
+### 3. 关键设置 (⚠️ 重要)
+
+部署完成后，进入 Space 的 **Settings** 页面：
+
+* 找到 **Change Space Visibility**。
+* 将其设置为 **Public**。
+* *原因：私有 Space 包含鉴权墙，会导致 VLC/PotPlayer 等播放器无法拉取数据。*
+
+---
+
+## 📺 使用方法 (Usage)
+
+### 📱 iOS (iPhone/iPad)
+
+1. 打开部署好的网页。
+2. 在下拉菜单中选择球队。
+3. 点击 **"Open Stream"**。
+4. Safari 会自动调用原生播放器进行播放。
+
+### 💻 PC / Android (Chrome/Edge)
+
+1. 打开网页，选择球队。
+2. 点击 **"Open Stream"**。
+3. 网页会跳转到一个 `.m3u8` 链接（或者浏览器尝试下载文件）。
+4. **复制该链接**。
+5. 打开 **PotPlayer** (Windows) 或 **VLC** (Mac/Android)。
+6. 按 `Ctrl+U` (PotPlayer) 或 `Cmd+N` (VLC) 粘贴链接即可播放。
+
+---
+
+## ⚙️ 技术细节
+
+本项目解决了直接播放源站 M3U8 时遇到的两个核心问题：
+
+1. **防盗链 (Referer)**：
+* Flask 后端在请求源站 M3U8 时，会自动伪造合法的 `Referer` 和 `User-Agent`，成功欺骗源站返回列表。
+
+
+2. **混合内容与路径错误**：
+* 源站返回的 M3U8 通常包含相对路径（如 `../segment.ts`）。
+* 本代理会自动将这些相对路径转换为**源站的绝对路径**（`https://source.com/segment.ts`）。
+* **结果**：播放器拿到的是指向源站的真实链接，直接建立连接，绕过了代理服务器的中转瓶颈。
+
+
+
+---
+
+## 🤝 贡献与自定义
+
+如果你想添加更多球队或修改源站，请编辑 `app.py` 中的 `PLAYLIST` 变量：
+
+```python
+PLAYLIST = [
+    {"name": "Team Name", "url": "/path/to/m3u8", "logo": "[https://url-to-logo.png](https://url-to-logo.png)"},
+    ...
+]
+
+```
+
+---
+
+## ⚠️ 免责声明 (Disclaimer)
+
+* 本项目仅供技术学习和交流使用。
+* 本项目不提供、不存储任何视频资源，所有流媒体内容均来自第三方源站。
+* 请勿用于商业用途。
+
+```
