@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HF NBA 代理</title>
+    <style>
+        body {
+            /* 背景图 */
+            background-image: url('https://images.unsplash.com/photo-1567158186373-2cdd94855eac?q=80&w=1920&auto=format&fit=crop');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            box-shadow: inset 0 0 0 2000px rgba(0, 0, 0, 0.4); /* 加深一点背景遮罩，突出Logo */
+        }
+        .container {
+            text-align: center;
+            padding: 2.5rem;
+            width: 85%;
+            max-width: 450px;
+            /* 方案 A：极致通透 */
+            background-color: rgba(20, 20, 20, 0.2); 
+            backdrop-filter: blur(10px) saturate(150%);
+            -webkit-backdrop-filter: blur(10px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            
+            border-radius: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            
+            /* 让内容平滑过渡 */
+            transition: all 0.3s ease;
+        }
+        /* 球队 Logo 样式 */
+        .team-logo {
+            width: 100px;
+            height: 100px;
+            object-fit: contain;
+            margin-bottom: 10px;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); /* 给 Logo 加投影 */
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* 弹跳动画 */
+        }
+        
+        .team-logo.active {
+            transform: scale(1.1); /* 选中时放大一下 */
+        }
+        h1 { 
+            color: #fff;
+            margin: 10px 0 5px 0;
+            font-weight: 700;
+            font-size: 1.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        p { 
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 25px; 
+            font-size: 0.9rem;
+        }
+        select {
+            width: 100%;
+            padding: 16px;
+            background-color: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            border-radius: 14px;
+            margin-bottom: 15px;
+            font-size: 16px;
+            outline: none;
+            appearance: none; 
+            -webkit-appearance: none;
+            cursor: pointer;
+            text-align: center;
+            font-weight: 500;
+        }
+        
+        .select-wrapper {
+            position: relative;
+            width: 100%;
+        }
+        .select-wrapper::after {
+            content: '▼';
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+        }
+        select option {
+            background-color: #1c1c1e;
+            color: white;
+            padding: 10px;
+        }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.8);
+            border-radius: 14px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            outline: none;
+            transition: 0.3s;
+        }
+        button {
+            width: 100%;
+            background: #007AFF; 
+            color: white;
+            border: none;
+            padding: 16px;
+            border-radius: 14px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 17px;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+        }
+        button:hover { 
+            background: #0062cc;
+            transform: scale(0.98); 
+        }
+        .tips { 
+            margin-top: 20px; 
+            font-size: 0.8rem; 
+            color: rgba(255, 255, 255, 0.4); 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <img id="teamLogo" src="https://cdn.nba.com/headshots/nba/latest/1040x760/logoman.png" class="team-logo" alt="Team Logo">
+        
+        <h1>NBA Live</h1>
+        <p>Select a team to start streaming</p>
+        
+        <div class="select-wrapper">
+            <select id="channelSelect" onchange="updateUI()">
+                <option value="" disabled selected data-logo="https://cdn.nba.com/headshots/nba/latest/1040x760/logoman.png">✨ 选择球队 / Select Team</option>
+                
+                {% for channel in channels %}
+                <option value="{{ channel.url }}" data-logo="{{ channel.logo }}">{{ channel.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <input type="text" id="pathInput" placeholder="Path will appear here..." readonly>
+        
+        <button onclick="play()">Open Stream</button>
+
+        <div class="tips">
+            Safari 浏览器可直接播放<br>Chrome 请复制跳转后的链接
+        </div>
+    </div>
+
+    <script>
+        // 核心逻辑：同时更新输入框和图片
+        function updateUI() {
+            var select = document.getElementById("channelSelect");
+            var input = document.getElementById("pathInput");
+            var logo = document.getElementById("teamLogo");
+            
+            // 1. 更新路径
+            input.value = select.value;
+            // 2. 获取当前选中项的 logo URL
+            var selectedOption = select.options[select.selectedIndex];
+            var logoUrl = selectedOption.getAttribute('data-logo');
+            // 3. 更新图片并添加动画效果
+            if (logoUrl) {
+                logo.style.transform = "scale(0.8)"; // 先缩小
+                setTimeout(() => {
+                    logo.src = logoUrl;
+                    logo.style.transform = "scale(1)"; // 再弹回正常
+                }, 150);
+            }
+        }
+        function play() {
+            let path = document.getElementById('pathInput').value;
+            if (!path) return alert("请先选择球队");
+            path = path.trim();
+            if (!path.startsWith('/')) path = '/' + path;
+            window.location.href = window.location.origin + path;
+        }
+    </script>
+</body>
+</html>
