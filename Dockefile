@@ -2,7 +2,7 @@
 FROM python:3.9-slim
 
 # 设置工作目录
-WORKDIR /app
+WORKDIR /main
 
 # 复制依赖文件并安装
 COPY requirements.txt .
@@ -12,10 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 赋予所有文件权限 (解决 HFS 的 Permission Denied 问题)
-RUN chmod -R 777 /app
+RUN chmod -R 777 /main
 
 # 暴露 HF 规定的端口
 EXPOSE 7860
 
 # 启动命令
-CMD ["python", "app.py"]
+CMD ["python", "main.py"]
