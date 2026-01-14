@@ -235,8 +235,9 @@ def team_stream(team_key):
         return f"#EXTM3U\n#EXT-X-ERROR: No signal found for {team_key}. Please update.", 404
     
     info = data[team_key]
-    real_url = f"https://{info['domain']}/secure/{info['token']}/admin/stream/{team_key}/1/playlist.m3u8"
-    
+    real_url = info.get('full_url')
+    if not real_url:
+        return f"#EXTM3U\n#EXT-X-ERROR: URL missing for {team_key}", 500
     return fetch_and_rewrite_m3u8(real_url)
 
 @app.route('/proxy')
