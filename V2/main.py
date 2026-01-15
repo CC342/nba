@@ -167,7 +167,7 @@ HTML_TEMPLATE = """
             var input = document.getElementById("pathInput");
             var logo = document.getElementById("teamLogo");
             
-            input.value = window.location.origin + "/" + select.value + "/index.m3u8";
+            input.value = "/" + select.value + "/index.m3u8";
             
             var selectedOption = select.options[select.selectedIndex];
             var logoUrl = selectedOption.getAttribute('data-logo');
