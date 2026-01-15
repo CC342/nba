@@ -31,4 +31,4 @@ jobs:
           context: ./V2              
           file: ./V2/Dockerfile      
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/nba-proxy:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/nbaflask:latest
