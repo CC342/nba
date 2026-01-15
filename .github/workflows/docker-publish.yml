@@ -19,7 +19,6 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
-      # 设置 Docker Buildx (构建工具)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
