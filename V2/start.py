@@ -67,12 +67,15 @@ def get_stream_url_worker(match_url, return_dict):
             content = page.content()
             soup = BeautifulSoup(content, "html.parser")
             for td in soup.find_all("td"):
-                if "sportsbest" in td.get_text(strip=True).lower():
+                text_lower = td.get_text(strip=True).lower()
+                # 【修改】兼容 sportsbest 和 admin
+                if "sportsbest" in text_lower or "admin" in text_lower:
                     onclick = td.get("onclick")
-                    m = re.search(r'view\((\d+)\)', onclick)
-                    if m:
-                        inp = soup.find("input", id=f"linkk{m.group(1)}")
-                        if inp: return_dict['url'] = inp.get("value")
+                    if onclick:
+                        m = re.search(r'view\((\d+)\)', onclick)
+                        if m:
+                            inp = soup.find("input", id=f"linkk{m.group(1)}")
+                            if inp: return_dict['url'] = inp.get("value")
                     break
             browser.close()
     except: pass
@@ -82,7 +85,7 @@ def get_stream_url_worker(match_url, return_dict):
 
 def scrape_m3u8_worker(url, return_dict):
     """
-    【修正 2】同步了代码 B 的增强逻辑
+    【完全重构】集成了点击 admin 与智能打断机制
     """
     display = Display(visible=0, size=(1280, 720))
     display.start()
@@ -96,11 +99,20 @@ def scrape_m3u8_worker(url, return_dict):
                 args=[
                     '--disable-blink-features=AutomationControlled', 
                     '--no-sandbox', 
-                    '--autoplay-policy=no-user-gesture-required'
+                    '--autoplay-policy=no-user-gesture-required',
+                    '--disable-web-security' # 防止 iframe 跨域阻截
                 ]
             )
             context = browser.new_context(user_agent=HEADERS['User-Agent'])
             page = context.new_page()
+
+            # 【新增】智能打断函数
+            def smart_wait(ms):
+                steps = max(1, int(ms / 200))
+                for _ in range(steps):
+                    if captured_urls: return True
+                    page.wait_for_timeout(200)
+                return False
             
             # 1. 网络监听
             def handle_request(request):
@@ -117,27 +129,53 @@ def scrape_m3u8_worker(url, return_dict):
                 page.goto(url, wait_until="domcontentloaded", timeout=25000)
             except: pass
 
+            # 稍微等一下，看是否能直接获取
+            if not captured_urls:
+                smart_wait(2000)
+
+            # 2. 核心：模拟点击 admin (如果没抓到才去点)
+            if not captured_urls:
+                try:
+                    clicked = False
+                    # 尝试点击主页面 admin
+                    try:
+                        admin_locator = page.locator("text=/admin/i").locator("visible=true").first
+                        if admin_locator.count() > 0:
+                            admin_locator.click(force=True, timeout=3000)
+                            clicked = True
+                    except: pass
+
+                    # 主页没找到，遍历 iframe 找
+                    if not clicked:
+                        for i, frame in enumerate(page.frames):
+                            try:
+                                f_locator = frame.locator("text=/admin/i").locator("visible=true").first
+                                if f_locator.count() > 0:
+                                    f_locator.click(force=True, timeout=3000)
+                                    clicked = True
+                                    break
+                            except: pass
+                    
+                    if clicked:
+                        smart_wait(5000) # 点击后等待播放器加载，一旦抓到立刻结束
+                except: pass
+
             start_time = time.time()
             found_url = None
             
-            # 2. 循环尝试
-            while time.time() - start_time < 35:
-                # 优先检查网络监听
-                if captured_urls:
-                    found_url = captured_urls[-1]
-                    break
+            # 3. 循环轮询与兜底扫描
+            while time.time() - start_time < 20:
+                if captured_urls: break
                 
                 # 点击激活
-                try:
-                    page.mouse.click(640, 360)
+                try: page.mouse.click(640, 360)
                 except: pass
                 
-                # 内存扫描 (增加了 window.player 检测)
+                # 内存扫描兜底
                 try:
                     for frame in page.frames:
                         res = frame.evaluate("""() => {
                             try {
-                                // [修正 3] 增加了 window.player 检测
                                 if (window.player && window.player.options) return window.player.options.source;
                                 if (window.Clappr && window.Clappr.options) return window.Clappr.options.source;
                                 if (window.jwplayer) return window.jwplayer(0).getConfig().file;
@@ -153,9 +191,11 @@ def scrape_m3u8_worker(url, return_dict):
                             break
                 except: pass
                 
-                time.sleep(3)
+                if smart_wait(2000): break
 
-            if found_url:
+            # 提取最终有效链接
+            if captured_urls:
+                found_url = captured_urls[-1]
                 match = re.search(r"https://([^/]+)/secure/([^/]+)/", found_url)
                 if match:
                     return_dict['domain'] = match.group(1)
@@ -190,14 +230,14 @@ def process_game(game):
     
     # 1. Get Stream Page
     res1 = run_with_timeout(get_stream_url_worker, (game['url'],), 20)
-    stream_url = res1.get('url') if res1 else None
+    stream_url = res1.get('url') if res1 else game['url'] # 如果获取不到，使用源地址兜底
     
     if not stream_url:
         print(f"    [-] No stream page found")
         return None
         
-    # 2. Get M3U8
-    res2 = run_with_timeout(scrape_m3u8_worker, (stream_url,), 40)
+    # 2. Get M3U8 (【重要】超时从 40 提高到 75)
+    res2 = run_with_timeout(scrape_m3u8_worker, (stream_url,), 75)
     
     if res2 and 'domain' in res2:
         print(f"    [+] SUCCESS: {res2['full_url'][:50]}...")
