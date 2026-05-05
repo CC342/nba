@@ -17,18 +17,94 @@ DATA_FILE = "game.json"
 BASE_URL = "https://www.nbabite.is/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
-# ================= 辅助函数 =================
+# ================= 标准球队字典 =================
+STANDARD_NBA_TEAMS = [
+    "Philadelphia 76ers", "Milwaukee Bucks", "Chicago Bulls", "Cleveland Cavaliers", 
+    "Boston Celtics", "Los Angeles Clippers", "Memphis Grizzlies", "Atlanta Hawks", 
+    "Miami Heat", "Charlotte Hornets", "Utah Jazz", "Sacramento Kings", 
+    "New York Knicks", "Los Angeles Lakers", "Orlando Magic", "Dallas Mavericks", 
+    "Brooklyn Nets", "Denver Nuggets", "Indiana Pacers", "New Orleans Pelicans", 
+    "Detroit Pistons", "Toronto Raptors", "Houston Rockets", "San Antonio Spurs", 
+    "Phoenix Suns", "Oklahoma City Thunder", "Minnesota Timberwolves", 
+    "Portland Trail Blazers", "Golden State Warriors", "Washington Wizards"
+]
+
+# ================= 辅助函数 (强制映射全称) =================
 
 def parse_teams(raw_text):
-    text = raw_text.replace("Match Started", "").strip()
-    clean_text = re.sub(r'vs|v\.s\.|v\.|-|@', ' ', text, flags=re.IGNORECASE)
-    words = clean_text.split()
-    if len(words) >= 4:
-        mid = len(words) // 2
-        home_key = "".join(w.lower() for w in words[:mid])
-        display_name = " ".join(words[:mid]) + " vs " + " ".join(words[mid:])
-        return home_key, display_name
-    return "unknown", text
+    clean_name = raw_text.replace("Match Started", "").replace("Live Now", "").replace("Live", "").strip()
+    clean_name = re.sub(r'\s+', ' ', clean_name)
+    
+    # 1. 优先使用连接符切割队伍名
+    split_patterns = [r'\s+vs\.?\s+', r'\s+v\.s\.\s+', r'\s+v\.\s+', r'\s+-\s+', r'\s+@\s+', r'\s+🆚\s+']
+    team1, team2 = "", ""
+    for pattern in split_patterns:
+        parts = re.split(pattern, clean_name, flags=re.IGNORECASE)
+        if len(parts) >= 2:
+            team1 = parts[0].strip()
+            team2 = " ".join(parts[1:]).strip()
+            break
+
+    # 2. 如果没有明显分隔符，尝试传统匹配
+    if not team1:
+        for team in STANDARD_NBA_TEAMS:
+            if clean_name.lower().startswith(team.lower()):
+                team1 = team
+                clean_name_rem = clean_name[len(team):].strip()
+                clean_name_rem = re.sub(r'^[^a-zA-Z0-9]+', '', clean_name_rem).strip()
+                break
+        if team1:
+            for team in STANDARD_NBA_TEAMS:
+                if clean_name_rem.lower().startswith(team.lower()):
+                    team2 = team
+                    break
+                    
+    # 3. 兜底对半分
+    if not team1:
+        words = clean_name.split()
+        if len(words) >= 2:
+            mid = len(words) // 2
+            team1 = ' '.join(words[:mid])
+            team2 = ' '.join(words[mid:])
+        else:
+            team1 = clean_name
+            
+    display_name = f"{team1} — {team2}" if team2 else team1
+
+    # ==== 4. 开始强制映射 Team1 作为 Docker Key ====
+    team1_lower = team1.lower()
+    alias_map = {
+        "l.a. clippers": "losangelesclippers", "la clippers": "losangelesclippers", "clippers": "losangelesclippers",
+        "l.a. lakers": "losangeleslakers", "la lakers": "losangeleslakers", "lakers": "losangeleslakers",
+        "sixers": "philadelphia76ers", "76ers": "philadelphia76ers",
+        "cavs": "clevelandcavaliers", "mavs": "dallasmavericks",
+        "t-wolves": "minnesotatimberwolves", "okc": "oklahomacitythunder"
+    }
+    
+    home_key = ""
+    # 检查别名
+    for alias, std_key in alias_map.items():
+        if alias in team1_lower:
+            home_key = std_key
+            break
+            
+    # 核心映射查找
+    if not home_key:
+        words = re.findall(r'[a-z0-9]+', team1_lower)
+        for team in STANDARD_NBA_TEAMS:
+            team_std_lower = team.lower()
+            for w in words:
+                # 至少3个字母才算有效关键词匹配
+                if len(w) >= 3 and w in team_std_lower:
+                    home_key = team_std_lower.replace(" ", "")
+                    break
+            if home_key: break
+            
+    # 最终兜底防错
+    if not home_key:
+        home_key = re.sub(r'[^a-zA-Z0-9]', '', team1).lower()
+
+    return home_key, display_name
 
 def fetch_home_matches():
     matches = []
@@ -68,7 +144,6 @@ def get_stream_url_worker(match_url, return_dict):
             soup = BeautifulSoup(content, "html.parser")
             for td in soup.find_all("td"):
                 text_lower = td.get_text(strip=True).lower()
-                # 【修改】兼容 sportsbest 和 admin
                 if "sportsbest" in text_lower or "admin" in text_lower:
                     onclick = td.get("onclick")
                     if onclick:
@@ -84,9 +159,6 @@ def get_stream_url_worker(match_url, return_dict):
 # ================= 核心 Worker 2: 强力抓取 M3U8 =================
 
 def scrape_m3u8_worker(url, return_dict):
-    """
-    【完全重构】集成了点击 admin 与智能打断机制
-    """
     display = Display(visible=0, size=(1280, 720))
     display.start()
     
@@ -100,13 +172,12 @@ def scrape_m3u8_worker(url, return_dict):
                     '--disable-blink-features=AutomationControlled', 
                     '--no-sandbox', 
                     '--autoplay-policy=no-user-gesture-required',
-                    '--disable-web-security' # 防止 iframe 跨域阻截
+                    '--disable-web-security'
                 ]
             )
             context = browser.new_context(user_agent=HEADERS['User-Agent'])
             page = context.new_page()
 
-            # 【新增】智能打断函数
             def smart_wait(ms):
                 steps = max(1, int(ms / 200))
                 for _ in range(steps):
@@ -114,7 +185,6 @@ def scrape_m3u8_worker(url, return_dict):
                     page.wait_for_timeout(200)
                 return False
             
-            # 1. 网络监听
             def handle_request(request):
                 try:
                     u = request.url
@@ -129,15 +199,12 @@ def scrape_m3u8_worker(url, return_dict):
                 page.goto(url, wait_until="domcontentloaded", timeout=25000)
             except: pass
 
-            # 稍微等一下，看是否能直接获取
             if not captured_urls:
                 smart_wait(2000)
 
-            # 2. 核心：模拟点击 admin (如果没抓到才去点)
             if not captured_urls:
                 try:
                     clicked = False
-                    # 尝试点击主页面 admin
                     try:
                         admin_locator = page.locator("text=/admin/i").locator("visible=true").first
                         if admin_locator.count() > 0:
@@ -145,7 +212,6 @@ def scrape_m3u8_worker(url, return_dict):
                             clicked = True
                     except: pass
 
-                    # 主页没找到，遍历 iframe 找
                     if not clicked:
                         for i, frame in enumerate(page.frames):
                             try:
@@ -157,21 +223,18 @@ def scrape_m3u8_worker(url, return_dict):
                             except: pass
                     
                     if clicked:
-                        smart_wait(5000) # 点击后等待播放器加载，一旦抓到立刻结束
+                        smart_wait(5000) 
                 except: pass
 
             start_time = time.time()
             found_url = None
             
-            # 3. 循环轮询与兜底扫描
             while time.time() - start_time < 20:
                 if captured_urls: break
                 
-                # 点击激活
                 try: page.mouse.click(640, 360)
                 except: pass
                 
-                # 内存扫描兜底
                 try:
                     for frame in page.frames:
                         res = frame.evaluate("""() => {
@@ -193,7 +256,6 @@ def scrape_m3u8_worker(url, return_dict):
                 
                 if smart_wait(2000): break
 
-            # 提取最终有效链接
             if captured_urls:
                 found_url = captured_urls[-1]
                 match = re.search(r"https://([^/]+)/secure/([^/]+)/", found_url)
@@ -228,15 +290,13 @@ def process_game(game):
     team_key, display_name = parse_teams(game['raw_name'])
     print(f"\n>>> Processing: {display_name}")
     
-    # 1. Get Stream Page
     res1 = run_with_timeout(get_stream_url_worker, (game['url'],), 20)
-    stream_url = res1.get('url') if res1 else game['url'] # 如果获取不到，使用源地址兜底
+    stream_url = res1.get('url') if res1 else game['url']
     
     if not stream_url:
         print(f"    [-] No stream page found")
         return None
         
-    # 2. Get M3U8 (【重要】超时从 40 提高到 75)
     res2 = run_with_timeout(scrape_m3u8_worker, (stream_url,), 75)
     
     if res2 and 'domain' in res2:
@@ -283,3 +343,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
