@@ -4,6 +4,7 @@ import time
 import re
 import os
 import sys
+import html
 import subprocess
 import warnings
 import multiprocessing
@@ -27,13 +28,31 @@ WX_SECRET = os.getenv("WX_SECRET")
 
 # 独立项目：保存为 sports.json
 DATA_FILE = "/home/nba/sports.json"
-BASE_URL = "https://gamesxxxx.top/"
+BASE_URL = "https://fox.co/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
 RED = "\033[1;91m"
 GREEN = "\033[1;92m"
 YELLOW = "\033[1;93m"
 RESET = "\033[0m"
+
+# ================= 体育图标映射字典 =================
+SPORT_ICONS = {
+    'football': '⚽',
+    'basketball': '🏀',
+    'american-football': '🏈',
+    'hockey': '🏒',
+    'baseball': '⚾',
+    'motor-sports': '🏎️',
+    'fight': '🥊',
+    'tennis': '🎾',
+    'rugby': '🏉',
+    'golf': '⛳',
+    'cricket': '🏏',
+    'afl': '🏉',
+    'darts': '🎯',
+    'other': '📺'
+}
 
 # ================= 消息推送 =================
 
@@ -56,82 +75,6 @@ def send_wechat(msg):
 
 # ================= 智能文本解析 =================
 
-def parse_display_and_key(raw_text):
-    time_str = ""
-    raw_lower = raw_text.lower()
-    
-    patterns = [
-        (r'(\d+)\s*hours?\s*and\s*(\d+)\s*minutes? from now', lambda h, m: f"{int(h):02d}:{int(m):02d} Later"),
-        (r'(\d+)\s*hours? from now', lambda h: f"{int(h):02d}:00 Later"),
-        (r'(\d+)\s*minutes? from now', lambda m: f"00:{int(m):02d} Later"),
-        (r'(\d+)\s*day[s]? from now', lambda d: f"{int(d)*24}:00 Later"),
-    ]
-    for pattern, func in patterns:
-        match = re.search(pattern, raw_lower)
-        if match:
-            time_str = func(*match.groups())
-            raw_text = re.sub(pattern, "", raw_text, flags=re.I)
-            break
-
-    clean = raw_text.replace("Match Started", "").replace("Live Now", "").replace("LIVE", "").replace("Live", "").replace("Regular Season", "").replace("Final", "").strip()
-    clean = re.sub(r'\s+', ' ', clean)
-    
-    categories = r'(?i)\b(hockey|basketball|baseball|football|soccer|tennis|cricket|other|rugby|motorsport|boxing|mma|ufc|wwe|volleyball|handball|darts|snooker|rally|tv)\b'
-    match = re.search(categories, clean)
-    category_formatted = ""
-    teams_part = clean
-    
-    if match:
-        cat_end_idx = match.end()
-        category_raw = clean[:cat_end_idx].strip()
-        teams_part = clean[cat_end_idx:].strip()
-        
-        words = category_raw.split()
-        if words:
-            words[-1] = words[-1].capitalize()
-            category_formatted = " ".join(words)
-            
-    if not teams_part:
-        teams_part = clean
-
-    split_patterns = [r'\s+vs\.?\s+', r'\s+v\.s\.\s+', r'\s+v\.\s+', r'\s+-\s+', r'\s+🆚\s+']
-    t1, t2 = "", ""
-    for pattern in split_patterns:
-        parts = re.split(pattern, teams_part, flags=re.IGNORECASE)
-        if len(parts) >= 2:
-            t1 = parts[0].strip()
-            t2 = " ".join(parts[1:]).strip() 
-            break
-            
-    if not t1:
-        t1 = teams_part
-        
-    display_teams = f"{t1} — {t2}" if t2 else t1
-    
-    display_name = ""
-    if time_str: display_name += f"{time_str}  "
-        
-    if category_formatted:
-        display_name += f"{category_formatted}: {display_teams}"
-    else:
-        display_name += display_teams
-        
-    key_text = re.sub(r'[^a-zA-Z0-9\s]', '', teams_part)
-    key_words = key_text.split()
-    if len(key_words) >= 2:
-        if t1 and t2:
-            t1_word = re.sub(r'[^a-zA-Z0-9]', '', t1.split()[0]).lower()
-            t2_word = re.sub(r'[^a-zA-Z0-9]', '', t2.split()[0]).lower()
-            key = f"{t1_word}{t2_word}"
-        else:
-            key = "".join(w.lower() for w in key_words[:2])
-    elif len(key_words) == 1:
-        key = key_words[0].lower()
-    else:
-        key = "unknown"
-        
-    return display_name.strip(), key
-
 def parse_key_from_title(title_text):
     parts = re.split(r'\s+vs\.?\s+', title_text, flags=re.IGNORECASE)
     if len(parts) >= 2:
@@ -144,10 +87,10 @@ def parse_key_from_title(title_text):
             return "".join(re.sub(r'[^a-zA-Z0-9]', '', w).lower() for w in words[:2])
         return "unknown"
 
-# ================= 精准抓取逻辑 =================
+# ================= 【核心修复：点击展开与智能选源 + Emoji】 =================
 
 def fetch_home_matches():
-    match_started, final_matches, from_now_matches = [], [], []
+    match_started = []
     seen_urls = set()
 
     with sync_playwright() as p:
@@ -155,54 +98,98 @@ def fetch_home_matches():
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             page = browser.new_page(user_agent=HEADERS['User-Agent'])
             page.goto(BASE_URL, timeout=15000, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000) 
-            content = page.content()
-            soup = BeautifulSoup(content, "html.parser")
             
-            track = soup.find(id="liveNowTrack")
-            if track:
-                cards = track.find_all('a', class_='watch')
-                for card in cards:
-                    href = card.get('href', '')
-                    if not href: continue
-                    
-                    if href.startswith("/"): href = BASE_URL.rstrip("/") + href
-                    
-                    base_href = href.split('?')[0]
-                    href_admin = base_href + "?source=admin"
-                    
-                    if base_href in seen_urls: continue
-                    seen_urls.add(base_href)
-                    
-                    chip = card.find('span', class_='ln-chip')
-                    cat_text = chip.get_text(strip=True) if chip else ""
-                    
-                    title_tag = card.find('h3', class_='card-title')
-                    title_text = title_tag.get_text(strip=True) if title_tag else card.get('data-watch-title', '')
-                    if not title_text: continue
-                    
-                    formatted_title = re.sub(r'\s+vs\.?\s+', ' — ', title_text, flags=re.IGNORECASE)
-                    if cat_text:
-                        display_name = f"{cat_text}: {formatted_title}"
-                    else:
-                        display_name = formatted_title
-                        
-                    team_key = parse_key_from_title(title_text)
-                    if team_key == "unknown" or len(team_key) < 2: continue
+            # 等待网页初始渲染
+            page.wait_for_timeout(3000) 
+            
+            # 主动点击 "See all live" 按钮，逼出所有被折叠的比赛
+            try:
+                live_btn = page.locator('a.see-all-live[data-live="1"]').first
+                if live_btn.count() > 0:
+                    live_btn.click(force=True, timeout=2000)
+                    page.wait_for_timeout(2000) 
+            except Exception:
+                pass
 
-                    match_started.append({
-                        "raw_name": title_text, 
-                        "url": href_admin, 
-                        "display_name": display_name,
-                        "team_key": team_key
-                    })
-                        
+            content = page.content()
             browser.close()
-        except Exception: pass
-        
-    return match_started, final_matches, from_now_matches
+        except Exception as e: 
+            print(f"Error fetching home: {e}")
+            return [], [], []
 
-def scrape_m3u8_worker(url, team_key, return_dict):
+    # 解析 DOM
+    soup = BeautifulSoup(content, "html.parser")
+    cards = soup.find_all('a', class_='watch')
+    
+    for card in cards:
+        href = card.get('href', '')
+        if not href: continue
+        
+        # 必须是直播状态
+        is_live = False
+        pill = card.find('span', class_='card-pill')
+        if pill and 'live' in pill.get_text(strip=True).lower():
+            is_live = True
+            
+        if not is_live: continue
+        
+        # 智能选源
+        target_source = "admin" 
+        src_raw = card.get('data-picker-src')
+        if src_raw:
+            try:
+                clean_src = html.unescape(src_raw) 
+                src_list = json.loads(clean_src)
+                if isinstance(src_list, list) and len(src_list) > 0:
+                    available_srcs = [s[0].lower() for s in src_list if isinstance(s, list) and len(s) > 0]
+                    if "admin" in available_srcs: target_source = "admin"
+                    elif "echo" in available_srcs: target_source = "echo"
+                    elif "delta" in available_srcs: target_source = "delta"
+                    else: target_source = available_srcs[0]
+            except Exception:
+                pass
+
+        if href.startswith("/"): href = BASE_URL.rstrip("/") + href
+        base_href = href.split('?')[0]
+        href_target = base_href + f"?source={target_source}"
+        
+        if href_target in seen_urls: continue
+        seen_urls.add(href_target)
+        
+        # 提取体育分类并匹配 Emoji
+        raw_sport = "other"
+        for cls in card.get('class', []):
+            if cls.startswith('card-sport-'):
+                raw_sport = cls.replace('card-sport-', '').lower()
+                break
+                
+        icon = SPORT_ICONS.get(raw_sport, '')
+        cat_name = raw_sport.replace('-', ' ').title()
+        cat_text = f"{icon} {cat_name}".strip()
+        
+        title_tag = card.find('h3', class_='card-title')
+        title_text = title_tag.get_text(strip=True) if title_tag else card.get('data-watch-title', '')
+        if not title_text: continue
+        
+        formatted_title = re.sub(r'\s+vs\.?\s+', ' — ', title_text, flags=re.IGNORECASE)
+        display_name = f"{cat_text}: {formatted_title}"
+        team_key = parse_key_from_title(title_text)
+        
+        if team_key == "unknown" or len(team_key) < 2: continue
+
+        match_started.append({
+            "raw_name": title_text, 
+            "url": href_target, 
+            "display_name": display_name,
+            "team_key": team_key,
+            "target_source": target_source
+        })
+        
+    return match_started, [], []
+
+# ================= 精准抓取逻辑 =================
+
+def scrape_m3u8_worker(url, team_key, target_source, return_dict):
     display = Display(visible=0, size=(1280, 720))
     display.start()
     
@@ -241,7 +228,7 @@ def scrape_m3u8_worker(url, team_key, return_dict):
             
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            except Exception: pass
+            except: pass
 
             smart_wait(1500)
 
@@ -249,25 +236,25 @@ def scrape_m3u8_worker(url, team_key, return_dict):
                 try:
                     clicked = False
                     try:
-                        admin_locator = page.locator("text=/admin/i").locator("visible=true").first
-                        if admin_locator.count() > 0:
-                            admin_locator.click(force=True, timeout=500)
+                        source_locator = page.locator(f"text=/{target_source}/i").locator("visible=true").first
+                        if source_locator.count() > 0:
+                            source_locator.click(force=True, timeout=500)
                             clicked = True
-                    except Exception: pass
+                    except: pass
 
                     if not clicked:
                         for i, frame in enumerate(page.frames):
                             try:
-                                f_locator = frame.locator("text=/admin/i").locator("visible=true").first
+                                f_locator = frame.locator(f"text=/{target_source}/i").locator("visible=true").first
                                 if f_locator.count() > 0:
                                     f_locator.click(force=True, timeout=500)
                                     clicked = True
                                     break
                             except: pass
-                except Exception: pass
+                except: pass
 
             if not captured_urls:
-                smart_wait(3000) 
+                smart_wait(5000) 
 
             if not captured_urls:
                 try:
@@ -289,24 +276,23 @@ def scrape_m3u8_worker(url, team_key, return_dict):
                 except: pass
 
             if captured_urls:
-                found_url = captured_urls[-1]
+                found_url = captured_urls[-1] 
                 
+                for u in reversed(captured_urls):
+                    if "playlist.m3u8" in u or "index.m3u8" in u or "master.m3u8" in u:
+                        found_url = u
+                        break
+                        
                 domain_match = re.search(r"https?://([^/]+)", found_url)
+                token_match = re.search(r"/secure/([^/]+)/", found_url)
+                
                 if domain_match:
                     return_dict['domain'] = domain_match.group(1)
-                else:
-                    return_dict['domain'] = "unknown"
-                
-                token_match = re.search(r"/secure/([^/]+)/", found_url)
-                if token_match:
-                    return_dict['token'] = token_match.group(1)
-                else:
-                    return_dict['token'] = "none"
-                    
-                return_dict['full_url'] = found_url
+                    return_dict['token'] = token_match.group(1) if token_match else "none"
+                    return_dict['full_url'] = found_url
             
             browser.close()
-    except Exception: pass
+    except: pass
     finally: display.stop()
 
 def run_with_timeout(func, args, timeout):
@@ -325,8 +311,8 @@ def run_with_timeout(func, args, timeout):
         return None
     return return_dict
 
-def process_game_get_m3u8(match_url, team_key):
-    res2 = run_with_timeout(scrape_m3u8_worker, (match_url, team_key), 25)
+def process_game_get_m3u8(match_url, team_key, target_source):
+    res2 = run_with_timeout(scrape_m3u8_worker, (match_url, team_key, target_source), 25)
     if res2 and 'full_url' in res2:
         return res2
     return None
@@ -336,7 +322,7 @@ def main():
         subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
 
-        match_started, final_matches, from_now_matches = fetch_home_matches()
+        match_started, _, _ = fetch_home_matches()
         push_msg = ""
         game_json_data = {}
 
@@ -346,12 +332,13 @@ def main():
         for i, m in enumerate(match_started, 1):
             display_name = m['display_name']
             team_key = m['team_key']
+            target_source = m.get('target_source', 'admin') 
             
             print(f"\n======================================")
-            print(f"{i}. {display_name}")
+            print(f"{i}. {display_name} (Using: {target_source})")
             push_msg += f"{i}. {display_name}\n"
             
-            m3u8_info = process_game_get_m3u8(m['url'], team_key)
+            m3u8_info = process_game_get_m3u8(m['url'], team_key, target_source)
             
             if m3u8_info:
                 game_json_data[team_key] = {
@@ -373,8 +360,6 @@ def main():
             else:
                 print(f"  {RED}Failed{RESET}")
                 push_msg += "  Failed\n"
-
-        # 删除了 Final 和 Future 的输出
 
         if game_json_data:
             with open(DATA_FILE, "w", encoding='utf-8') as f:
