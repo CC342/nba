@@ -28,39 +28,27 @@ WX_SECRET = os.getenv("WX_SECRET")
 
 # 独立项目：保存为 sports.json
 DATA_FILE = "/home/nba/sports.json"
-BASE_URL = "https://fox.co/"
-HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+BASE_URL = "https://foxtrend.app/"
+HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"}
 
 RED = "\033[1;91m"
 GREEN = "\033[1;92m"
 YELLOW = "\033[1;93m"
 RESET = "\033[0m"
 
-# ================= 体育图标映射字典 =================
 SPORT_ICONS = {
-    'football': '⚽',
-    'basketball': '🏀',
-    'american-football': '🏈',
-    'hockey': '🏒',
-    'baseball': '⚾',
-    'motor-sports': '🏎️',
-    'fight': '🥊',
-    'tennis': '🎾',
-    'rugby': '🏉',
-    'golf': '⛳',
-    'cricket': '🏏',
-    'afl': '🏉',
-    'darts': '🎯',
-    'other': '📺'
+    'football': '⚽', 'basketball': '🏀', 'american-football': '🏈',
+    'hockey': '🏒', 'baseball': '⚾', 'motor-sports': '🏎️',
+    'fight': '🥊', 'tennis': '🎾', 'rugby': '🏉', 'golf': '⛳',
+    'cricket': '🏏', 'afl': '🏉', 'darts': '🎯', 'other': '📺'
 }
 
 # ================= 消息推送 =================
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        requests.get(url, params={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    except Exception: pass
+    try: requests.get(url, params={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+    except: pass
 
 def send_wechat(msg):
     token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WX_CORP_ID}&corpsecret={WX_SECRET}"
@@ -71,7 +59,7 @@ def send_wechat(msg):
             send_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
             data = {"touser": "@all", "msgtype": "text", "agentid": int(WX_AGENT_ID), "text": {"content": msg}, "safe": 0}
             requests.post(send_url, json=data)
-    except Exception: pass
+    except: pass
 
 # ================= 智能文本解析 =================
 
@@ -87,7 +75,7 @@ def parse_key_from_title(title_text):
             return "".join(re.sub(r'[^a-zA-Z0-9]', '', w).lower() for w in words[:2])
         return "unknown"
 
-# ================= 【核心修复：点击展开与智能选源 + Emoji】 =================
+# ================= 抓取主页 =================
 
 def fetch_home_matches():
     match_started = []
@@ -97,27 +85,21 @@ def fetch_home_matches():
         try:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             page = browser.new_page(user_agent=HEADERS['User-Agent'])
-            page.goto(BASE_URL, timeout=15000, wait_until="domcontentloaded")
+            # 提速：主页加载超时缩短
+            page.goto(BASE_URL, timeout=12000, wait_until="domcontentloaded")
+            page.wait_for_timeout(1500) # 提速：减少等待时间
             
-            # 等待网页初始渲染
-            page.wait_for_timeout(3000) 
-            
-            # 主动点击 "See all live" 按钮，逼出所有被折叠的比赛
             try:
                 live_btn = page.locator('a.see-all-live[data-live="1"]').first
                 if live_btn.count() > 0:
-                    live_btn.click(force=True, timeout=2000)
-                    page.wait_for_timeout(2000) 
-            except Exception:
-                pass
+                    live_btn.click(force=True, timeout=1500)
+                    page.wait_for_timeout(1000) 
+            except: pass
 
             content = page.content()
             browser.close()
-        except Exception as e: 
-            print(f"Error fetching home: {e}")
-            return [], [], []
+        except: return [], [], []
 
-    # 解析 DOM
     soup = BeautifulSoup(content, "html.parser")
     cards = soup.find_all('a', class_='watch')
     
@@ -125,7 +107,6 @@ def fetch_home_matches():
         href = card.get('href', '')
         if not href: continue
         
-        # 必须是直播状态
         is_live = False
         pill = card.find('span', class_='card-pill')
         if pill and 'live' in pill.get_text(strip=True).lower():
@@ -133,7 +114,6 @@ def fetch_home_matches():
             
         if not is_live: continue
         
-        # 智能选源
         target_source = "admin" 
         src_raw = card.get('data-picker-src')
         if src_raw:
@@ -144,10 +124,8 @@ def fetch_home_matches():
                     available_srcs = [s[0].lower() for s in src_list if isinstance(s, list) and len(s) > 0]
                     if "admin" in available_srcs: target_source = "admin"
                     elif "echo" in available_srcs: target_source = "echo"
-                    elif "delta" in available_srcs: target_source = "delta"
                     else: target_source = available_srcs[0]
-            except Exception:
-                pass
+            except: pass
 
         if href.startswith("/"): href = BASE_URL.rstrip("/") + href
         base_href = href.split('?')[0]
@@ -156,7 +134,6 @@ def fetch_home_matches():
         if href_target in seen_urls: continue
         seen_urls.add(href_target)
         
-        # 提取体育分类并匹配 Emoji
         raw_sport = "other"
         for cls in card.get('class', []):
             if cls.startswith('card-sport-'):
@@ -187,7 +164,7 @@ def fetch_home_matches():
         
     return match_started, [], []
 
-# ================= 精准抓取逻辑 =================
+# ================= 精准抓取逻辑 (提速版) =================
 
 def scrape_m3u8_worker(url, team_key, target_source, return_dict):
     display = Display(visible=0, size=(1280, 720))
@@ -209,13 +186,6 @@ def scrape_m3u8_worker(url, team_key, target_source, return_dict):
             context = browser.new_context(user_agent=HEADERS['User-Agent'])
             page = context.new_page()
             
-            def smart_wait(ms):
-                steps = max(1, int(ms / 200))
-                for _ in range(steps):
-                    if captured_urls: return True
-                    page.wait_for_timeout(200)
-                return False
-            
             def handle_request(request):
                 try:
                     u = request.url
@@ -228,35 +198,25 @@ def scrape_m3u8_worker(url, team_key, target_source, return_dict):
             
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                # 提速：等待 iframe，2秒通常足够了
+                page.wait_for_timeout(2000) 
             except: pass
 
-            smart_wait(1500)
+            try:
+                page.mouse.click(640, 360)
+                page.wait_for_timeout(500)
+                page.mouse.click(640, 360)
+            except: pass
 
-            if not captured_urls:
-                try:
-                    clicked = False
-                    try:
-                        source_locator = page.locator(f"text=/{target_source}/i").locator("visible=true").first
-                        if source_locator.count() > 0:
-                            source_locator.click(force=True, timeout=500)
-                            clicked = True
-                    except: pass
-
-                    if not clicked:
-                        for i, frame in enumerate(page.frames):
-                            try:
-                                f_locator = frame.locator(f"text=/{target_source}/i").locator("visible=true").first
-                                if f_locator.count() > 0:
-                                    f_locator.click(force=True, timeout=500)
-                                    clicked = True
-                                    break
-                            except: pass
-                except: pass
-
-            if not captured_urls:
-                smart_wait(5000) 
-
-            if not captured_urls:
+            start_time = time.time()
+            found_url = None
+            
+            while time.time() - start_time < 15: # 提速：最大等待从 20 秒降到 15 秒
+                valid_urls = [u for u in captured_urls if "secure" in u or "mono" in u or "playlist" in u]
+                if valid_urls:
+                    found_url = valid_urls[-1]
+                    break
+                
                 try:
                     for frame in page.frames:
                         res = frame.evaluate("""() => {
@@ -269,23 +229,30 @@ def scrape_m3u8_worker(url, team_key, target_source, return_dict):
                                 }
                             } catch(e) {}
                             return null;
-                        }""") 
-                        if res:
+                        }""")
+                        if res and ".m3u8" in res:
+                            found_url = res
                             captured_urls.append(res)
                             break
+                    if found_url: break
                 except: pass
-
-            if captured_urls:
-                found_url = captured_urls[-1] 
                 
+                try: page.mouse.click(640, 360)
+                except: pass
+                # 提速：加快轮询频率，0.5秒扫一次
+                page.wait_for_timeout(500)
+
+            if not found_url and captured_urls:
                 for u in reversed(captured_urls):
-                    if "playlist.m3u8" in u or "index.m3u8" in u or "master.m3u8" in u:
+                    if "playlist.m3u8" in u or "index.m3u8" in u or "master.m3u8" in u or "secure" in u:
                         found_url = u
                         break
-                        
+                if not found_url:
+                    found_url = captured_urls[-1]
+                    
+            if found_url:
                 domain_match = re.search(r"https?://([^/]+)", found_url)
                 token_match = re.search(r"/secure/([^/]+)/", found_url)
-                
                 if domain_match:
                     return_dict['domain'] = domain_match.group(1)
                     return_dict['token'] = token_match.group(1) if token_match else "none"
@@ -312,7 +279,8 @@ def run_with_timeout(func, args, timeout):
     return return_dict
 
 def process_game_get_m3u8(match_url, team_key, target_source):
-    res2 = run_with_timeout(scrape_m3u8_worker, (match_url, team_key, target_source), 25)
+    # 提速：最大超时时间从 45 秒压缩到 30 秒，防止死局卡住太久
+    res2 = run_with_timeout(scrape_m3u8_worker, (match_url, team_key, target_source), 30)
     if res2 and 'full_url' in res2:
         return res2
     return None
@@ -335,7 +303,8 @@ def main():
             target_source = m.get('target_source', 'admin') 
             
             print(f"\n======================================")
-            print(f"{i}. {display_name} (Using: {target_source})")
+            # 【已修复】：不再打印 (Using: admin)
+            print(f"{i}. {display_name}")
             push_msg += f"{i}. {display_name}\n"
             
             m3u8_info = process_game_get_m3u8(m['url'], team_key, target_source)
