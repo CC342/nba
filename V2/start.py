@@ -30,7 +30,7 @@ STANDARD_NBA_TEAMS = [
 ]
 
 # ================= 辅助函数 (强制映射全称) =================
-
+# 【此函数必须保留，Docker 端强依赖此映射 Key】
 def parse_teams(raw_text):
     clean_name = raw_text.replace("Match Started", "").replace("Live Now", "").replace("Live", "").strip()
     clean_name = re.sub(r'\s+', ' ', clean_name)
@@ -106,6 +106,7 @@ def parse_teams(raw_text):
 
     return home_key, display_name
 
+# ================= 抓取主页 (精准 NBA 分区版) =================
 def fetch_home_matches():
     matches = []
     print("[*] 正在获取比赛列表...")
@@ -113,50 +114,36 @@ def fetch_home_matches():
         try:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             page = browser.new_page(user_agent=HEADERS['User-Agent'])
-            page.goto(BASE_URL, timeout=15000, wait_until="domcontentloaded")
+            page.goto(BASE_URL, timeout=12000, wait_until="domcontentloaded")
             content = page.content()
             
             soup = BeautifulSoup(content, "html.parser")
-            for a in soup.find_all("a", href=True):
-                text = a.get_text(separator=" ", strip=True)
-                if "Match Started" in text:
-                    href = a['href']
-                    if href.startswith("/"): href = BASE_URL.rstrip("/") + href
-                    matches.append({"raw_name": text, "url": href})
             
+            # 定位 NBA 专属模块，免疫 WNBA 和 NCAAM
+            nba_header = None
+            for span in soup.find_all("span", class_="text-white"):
+                if "nba streams" in span.get_text(strip=True).lower():
+                    nba_header = span
+                    break
+                    
+            if nba_header:
+                nba_container = nba_header.find_next("div", class_="row")
+                if nba_container:
+                    for a in nba_container.find_all("a", href=True):
+                        text = a.get_text(separator=" ", strip=True)
+                        if "Match Started" in text:
+                            href = a['href']
+                            if href.startswith("/"): href = BASE_URL.rstrip("/") + href
+                            matches.append({"raw_name": text, "url": href})
+                            
             browser.close()
         except Exception as e: 
             print(f"Error fetching home: {e}")
             pass
     return matches
 
-# ================= 核心 Worker 1: 获取中间页 =================
-
-def get_stream_url_worker(match_url, return_dict):
-    display = Display(visible=0, size=(1280, 720))
-    display.start()
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=['--no-sandbox'])
-            page = browser.new_page(user_agent=HEADERS['User-Agent'])
-            page.goto(match_url, timeout=15000, wait_until="domcontentloaded")
-            content = page.content()
-            soup = BeautifulSoup(content, "html.parser")
-            for td in soup.find_all("td"):
-                text_lower = td.get_text(strip=True).lower()
-                if "sportsbest" in text_lower or "admin" in text_lower:
-                    onclick = td.get("onclick")
-                    if onclick:
-                        m = re.search(r'view\((\d+)\)', onclick)
-                        if m:
-                            inp = soup.find("input", id=f"linkk{m.group(1)}")
-                            if inp: return_dict['url'] = inp.get("value")
-                    break
-            browser.close()
-    except: pass
-    finally: display.stop()
-
-# ================= 核心 Worker 2: 强力抓取 M3U8 =================
+# ================= 强力抓取 M3U8 (一步到位防风控版) =================
+# 注意：已经彻底删除了无用的 get_stream_url_worker
 
 def scrape_m3u8_worker(url, return_dict):
     display = Display(visible=0, size=(1280, 720))
@@ -177,13 +164,6 @@ def scrape_m3u8_worker(url, return_dict):
             )
             context = browser.new_context(user_agent=HEADERS['User-Agent'])
             page = context.new_page()
-
-            def smart_wait(ms):
-                steps = max(1, int(ms / 200))
-                for _ in range(steps):
-                    if captured_urls: return True
-                    page.wait_for_timeout(200)
-                return False
             
             def handle_request(request):
                 try:
@@ -195,73 +175,81 @@ def scrape_m3u8_worker(url, return_dict):
             
             page.on("request", handle_request)
             
+            # 1. 停留在原详情网页
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                page.wait_for_timeout(2000) 
             except: pass
 
-            if not captured_urls:
-                smart_wait(2000)
+            # 2. 模拟激活播放按钮
+            try:
+                if page.locator("a.sr-on").count() > 0:
+                    page.locator("a.sr-on").first.click(timeout=1000)
+                    page.wait_for_timeout(1000)
+                else:
+                    admin_td = page.locator("td", has_text=re.compile("admin|sportsbest", re.IGNORECASE)).first
+                    if admin_td.count() > 0:
+                        admin_td.click(timeout=1000)
+                        page.wait_for_timeout(1500)
+            except: pass
 
-            if not captured_urls:
-                try:
-                    clicked = False
-                    try:
-                        admin_locator = page.locator("text=/admin/i").locator("visible=true").first
-                        if admin_locator.count() > 0:
-                            admin_locator.click(force=True, timeout=3000)
-                            clicked = True
-                    except: pass
-
-                    if not clicked:
-                        for i, frame in enumerate(page.frames):
-                            try:
-                                f_locator = frame.locator("text=/admin/i").locator("visible=true").first
-                                if f_locator.count() > 0:
-                                    f_locator.click(force=True, timeout=3000)
-                                    clicked = True
-                                    break
-                            except: pass
-                    
-                    if clicked:
-                        smart_wait(5000) 
-                except: pass
+            # 3. 破坏透明遮罩并激活播放器
+            try:
+                page.mouse.click(640, 360)
+                page.wait_for_timeout(500)
+                page.mouse.click(640, 360)
+            except: pass
 
             start_time = time.time()
             found_url = None
             
-            while time.time() - start_time < 20:
-                if captured_urls: break
-                
-                try: page.mouse.click(640, 360)
-                except: pass
+            # 4. 极速扫描 (最大 15 秒)
+            while time.time() - start_time < 15:
+                valid_urls = [u for u in captured_urls if "secure" in u or "mono" in u or "playlist" in u]
+                if valid_urls:
+                    found_url = valid_urls[-1]
+                    break
                 
                 try:
                     for frame in page.frames:
                         res = frame.evaluate("""() => {
                             try {
-                                if (window.player && window.player.options) return window.player.options.source;
-                                if (window.Clappr && window.Clappr.options) return window.Clappr.options.source;
                                 if (window.jwplayer) return window.jwplayer(0).getConfig().file;
+                                if (window.player && window.player.options) return window.player.options.source;
                                 if (window.config && window.config.file) return window.config.file;
                                 for (let k in window) {
-                                    if (typeof window[k] === 'string' && window[k].includes('.m3u8') && window[k].includes('http')) return window[k];
+                                    if (typeof window[k] === 'string' && window[k].includes('.m3u8')) return window[k];
                                 }
                             } catch(e) {}
                             return null;
-                        }""") 
-                        if res:
+                        }""")
+                        if res and ".m3u8" in res:
+                            found_url = res
                             captured_urls.append(res)
                             break
+                    if found_url: break
                 except: pass
                 
-                if smart_wait(2000): break
+                try: page.mouse.click(640, 360)
+                except: pass
+                page.wait_for_timeout(500)
 
-            if captured_urls:
-                found_url = captured_urls[-1]
-                match = re.search(r"https://([^/]+)/secure/([^/]+)/", found_url)
-                if match:
-                    return_dict['domain'] = match.group(1)
-                    return_dict['token'] = match.group(2)
+            # 回溯查找
+            if not found_url and captured_urls:
+                for u in reversed(captured_urls):
+                    if "playlist.m3u8" in u or "index.m3u8" in u or "master.m3u8" in u or "secure" in u:
+                        found_url = u
+                        break
+                if not found_url:
+                    found_url = captured_urls[-1]
+                    
+            if found_url:
+                domain_match = re.search(r"https?://([^/]+)", found_url)
+                token_match = re.search(r"/secure/([^/]+)/", found_url)
+                
+                if domain_match:
+                    return_dict['domain'] = domain_match.group(1)
+                    return_dict['token'] = token_match.group(1) if token_match else "none"
                     return_dict['full_url'] = found_url
             
             browser.close()
@@ -290,21 +278,18 @@ def process_game(game):
     team_key, display_name = parse_teams(game['raw_name'])
     print(f"\n>>> Processing: {display_name}")
     
-    res1 = run_with_timeout(get_stream_url_worker, (game['url'],), 20)
-    stream_url = res1.get('url') if res1 else game['url']
-    
-    if not stream_url:
-        print(f"    [-] No stream page found")
-        return None
-        
-    res2 = run_with_timeout(scrape_m3u8_worker, (stream_url,), 75)
+    # 直接将 URL 传入终极抓取函数，超时限制为 30 秒
+    res2 = run_with_timeout(scrape_m3u8_worker, (game['url'],), 30)
     
     if res2 and 'domain' in res2:
         print(f"    [+] SUCCESS: {res2['full_url'][:50]}...")
         return {
-            "key": team_key, "name": display_name,
-            "domain": res2['domain'], "token": res2['token'],
-            "full_url": res2['full_url'], "updated_at": time.time()
+            "key": team_key, 
+            "name": display_name,
+            "domain": res2['domain'], 
+            "token": res2['token'],
+            "full_url": res2['full_url'], 
+            "updated_at": time.time()
         }
     else:
         print("    [-] Failed")
@@ -343,4 +328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
