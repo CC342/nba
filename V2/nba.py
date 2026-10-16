@@ -7,6 +7,7 @@ import sys
 import subprocess
 import warnings
 import multiprocessing
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -26,8 +27,7 @@ WX_AGENT_ID = os.getenv("WX_AGENT_ID")
 WX_SECRET = os.getenv("WX_SECRET")
 
 DATA_FILE = "/home/nba/game.json"
-NBABITE_URL = "https://www.nbabite.is/"
-FOXTREND_URL = "https://foxtrend.app/"
+FOXTREND_URL = "https://fxt.app/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"}
 
 RED = "\033[1;91m"
@@ -69,69 +69,6 @@ def send_wechat(msg):
 
 # ================= 文本解析 =================
 
-def format_final_name(raw_text):
-    clean = raw_text.replace("Final", "").replace("Watch Highlights", "").strip()
-    team1 = None
-    for team in NBA_TEAMS:
-        if clean.startswith(team):
-            team1 = team
-            break
-    if not team1: return clean
-    rest = clean[len(team1):].strip()
-    m1 = re.match(r'^(\d+)', rest)
-    if not m1: return clean
-    score1 = m1.group(1)
-    rest = rest[len(score1):].strip()
-    team2 = None
-    for team in NBA_TEAMS:
-        if rest.startswith(team):
-            team2 = team
-            break
-    if not team2: return clean
-    score2 = rest[len(team2):].strip()
-    return f"{team1} {score1} — {score2} {team2}"
-
-def format_from_now_name(raw_text):
-    raw_lower = raw_text.lower()
-    patterns = [
-        (r'(\d+)\s*hours?\s*and\s*(\d+)\s*minutes? from now', lambda h, m: f"{int(h):02d}:{int(m):02d} Later"),
-        (r'(\d+)\s*hours? from now', lambda h: f"{int(h):02d}:00 Later"),
-        (r'(\d+)\s*minutes? from now', lambda m: f"00:{int(m):02d} Later"),
-        (r'(\d+)\s*day[s]? from now', lambda d: f"{int(d)*24}:00 Later"),
-    ]
-    time_str = ""
-    for pattern, func in patterns:
-        match = re.search(pattern, raw_lower)
-        if match:
-            time_str = func(*match.groups())
-            raw_text = re.sub(pattern, "", raw_text, flags=re.I)
-            break
-    t1, t2 = parse_match_name(raw_text)
-    if t1 and t2: return f"{time_str}  {t1}  🆚  {t2}"
-    return f"{time_str}  {raw_text.strip()}"
-
-def parse_match_name(raw_name):
-    clean_name = raw_name.replace("Match Started", " ").strip()
-    clean_name = re.sub(r'\s+', ' ', clean_name)
-    team1, team2 = "", ""
-    for team in NBA_TEAMS:
-        if clean_name.lower().startswith(team.lower()):
-            team1 = team
-            clean_name = clean_name[len(team):].strip()
-            break
-    if clean_name:
-        for team in NBA_TEAMS:
-            if clean_name.lower().startswith(team.lower()):
-                team2 = team
-                break
-    if not team1 or not team2:
-        words = re.findall(r'[A-Z0-9][a-z0-9]*(?:\s[A-Z0-9][a-z0-9]*)*', raw_name.replace("Match Started", ""))
-        if len(words) >= 2:
-            mid = len(words) // 2
-            return ' '.join(words[:mid]), ' '.join(words[mid:])
-        return raw_name, ""
-    return team1, team2
-
 def parse_teams_for_key(raw_text):
     text = raw_text.replace("Match Started", "").strip()
     clean_text = re.sub(r'vs|v\.s\.|v\.|-|@', ' ', text, flags=re.IGNORECASE)
@@ -143,39 +80,72 @@ def parse_teams_for_key(raw_text):
         return home_key
     return "unknown"
 
-# ================= 数据源1: nbabite.is 取 NBA 赛程 =================
+# ================= 数据源1: ESPN 记分牌取 NBA 赛程 =================
+# 公开接口免 key, dates 参数按美东日期解释
+# 一次取美东今天+昨天: Final 按北京时间过滤出"今天"的; Live/Future 取美东今天
 
-def fetch_nbabite_matches():
+BJ_TZ = timezone(timedelta(hours=8))  # 北京时间无夏令时, 固定 UTC+8
+
+def et_offset_hours(now_utc=None):
+    """美东 UTC 偏移: 夏令时(3月第2周日~11月第1周日)为 -4, 否则 -5"""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    y = now_utc.year
+    dst_start = datetime(y, 3, 1) + timedelta(days=(6 - datetime(y, 3, 1).weekday()) % 7 + 7)
+    dst_end = datetime(y, 11, 1) + timedelta(days=(6 - datetime(y, 11, 1).weekday()) % 7)
+    dst_start_utc = dst_start.replace(tzinfo=timezone.utc) + timedelta(hours=7)
+    dst_end_utc = dst_end.replace(tzinfo=timezone.utc) + timedelta(hours=6)
+    return -4 if dst_start_utc <= now_utc < dst_end_utc else -5
+
+def et_ymd(offset=0):
+    et_now = datetime.now(timezone.utc) + timedelta(hours=et_offset_hours())
+    return (et_now + timedelta(days=offset)).date().strftime("%Y%m%d")
+
+def to_bj(utc_str):
+    try:
+        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(BJ_TZ)
+    except Exception:
+        return None
+
+def fetch_espn_matches():
+    """ESPN 赛程: 返回 (match_started, final_matches, from_now_matches)"""
     match_started, final_matches, from_now_matches = [], [], []
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page(user_agent=HEADERS['User-Agent'])
-            page.goto(NBABITE_URL, timeout=12000, wait_until="domcontentloaded")
-            content = page.content()
-            soup = BeautifulSoup(content, "html.parser")
-
-            nba_header = None
-            for span in soup.find_all("span", class_="text-white"):
-                if "nba streams" in span.get_text(strip=True).lower():
-                    nba_header = span
-                    break
-
-            if nba_header:
-                nba_container = nba_header.find_next("div", class_="row")
-                if nba_container:
-                    for a in nba_container.find_all("a", href=True):
-                        text = a.get_text(separator=" ", strip=True)
-                        low = text.lower()
-                        if "match started" in low:
-                            t1, t2 = parse_match_name(text)
-                            match_started.append({"raw_name": text, "team1": t1, "team2": t2})
-                        elif "final" in low:
-                            final_matches.append({"name": format_final_name(text)})
-                        elif "from now" in low:
-                            from_now_matches.append({"name": format_from_now_name(text)})
-            browser.close()
-        except: pass
+    bj_today = datetime.now(BJ_TZ).date()
+    try:
+        seen = set()
+        for off in (0, -1):  # 美东今天 + 昨天
+            ymd = et_ymd(off)
+            url = ("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+                   f"?dates={ymd}")
+            events = requests.get(url, timeout=15).json().get("events", [])
+            for e in events:
+                eid = e.get("id")
+                if eid in seen:
+                    continue
+                seen.add(eid)
+                comp = (e.get("competitions") or [{}])[0]
+                teams = {}
+                for c in comp.get("competitors", []):
+                    t = c.get("team", {})
+                    teams[c.get("homeAway")] = (t.get("displayName", ""), c.get("score", "0"))
+                if "away" not in teams or "home" not in teams:
+                    continue
+                (t_away, s_away), (t_home, s_home) = teams["away"], teams["home"]
+                state = ((e.get("status") or {}).get("type") or {}).get("state")
+                dt = to_bj(e.get("date", ""))
+                if state == "in":
+                    match_started.append({"raw_name": f"{t_away} vs {t_home}",
+                                          "team1": t_away, "team2": t_home})
+                elif state == "post":
+                    if bj_today is None or (dt and dt.date() == bj_today):
+                        final_matches.append({"name": f"{t_away} {s_away} — {s_home} {t_home}"})
+                elif state == "pre":
+                    bts = dt.strftime("%H:%M") if dt else ""
+                    from_now_matches.append({"name": f"{bts}  {t_away}  🆚  {t_home}"})
+    except Exception as ex:
+        print(f"ESPN赛程失败: {ex}")
     return match_started, final_matches, from_now_matches
 
 # ================= 数据源2: foxtrend.app 取直播流地址 =================
@@ -211,7 +181,6 @@ def fetch_foxtrend_basketball():
         if not (pill and 'live' in pill.get_text(strip=True).lower()):
             continue
 
-        # 注：旧版 ?source=admin 参数 fxtrend.st 已不识别（带与不带返回相同页面），
         # 直接使用卡片原链接；播放页默认激活的即是网站推荐的第一个 HD 源（Core 1）。
         if href.startswith("/"): href = FOXTREND_URL.rstrip("/") + href
         href_target = href.split('?')[0]
@@ -382,9 +351,12 @@ def run_with_timeout(func, args, timeout):
     p.join(timeout)
     if p.is_alive():
         p.terminate()
-        p.join()
+        p.join(5)
+        if p.is_alive():
+            p.kill()
+            p.join(5)
         try:
-            subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
             subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
         except: pass
         return None
@@ -414,12 +386,12 @@ def scrape_one(args):
 
 def main():
     try:
-        subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
 
-        # 提速：两个主页并行抓
+        # 提速：两个主页并行抓（赛程走 ESPN）
         with ThreadPoolExecutor(max_workers=2) as ex:
-            f1 = ex.submit(fetch_nbabite_matches)
+            f1 = ex.submit(fetch_espn_matches)
             f2 = ex.submit(fetch_foxtrend_basketball)
             match_started, final_matches, from_now_matches = f1.result()
             foxtrend_list = f2.result()
@@ -494,7 +466,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[!] Exit")
-        subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
 
 if __name__ == "__main__":
     main()
