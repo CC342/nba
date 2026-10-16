@@ -6,6 +6,8 @@ import sys
 import subprocess
 import warnings
 import multiprocessing
+import requests
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -14,9 +16,7 @@ from pyvirtualdisplay import Display
 warnings.filterwarnings("ignore")
 
 DATA_FILE = "game.json"
-BASE_URL = "https://www.nbabite.is/"
 FOXTREND_URL = "https://foxtrend.app/"
-# 对外播放地址前缀（Flask 的 /<team_key>/index.m3u8 经该域名对外）
 PUBLIC_BASE = "https://sports.imeet.eu.org"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
@@ -103,38 +103,52 @@ def parse_teams(raw_text):
 
     return home_key, display_name, team1, team2
 
-# ================= 抓取主页 (只抓 NBA 区域) =================
-def fetch_home_matches():
+# ================= 数据源1: ESPN 记分牌取 NBA 直播赛程 =================
+# 公开接口免 key, dates 参数按美东日期解释; 只取正在进行的比赛
+
+def et_offset_hours(now_utc=None):
+    """美东 UTC 偏移: 夏令时(3月第2周日~11月第1周日)为 -4, 否则 -5"""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    y = now_utc.year
+    dst_start = datetime(y, 3, 1) + timedelta(days=(6 - datetime(y, 3, 1).weekday()) % 7 + 7)
+    dst_end = datetime(y, 11, 1) + timedelta(days=(6 - datetime(y, 11, 1).weekday()) % 7)
+    dst_start_utc = dst_start.replace(tzinfo=timezone.utc) + timedelta(hours=7)
+    dst_end_utc = dst_end.replace(tzinfo=timezone.utc) + timedelta(hours=6)
+    return -4 if dst_start_utc <= now_utc < dst_end_utc else -5
+
+def et_ymd(offset=0):
+    et_now = datetime.now(timezone.utc) + timedelta(hours=et_offset_hours())
+    return (et_now + timedelta(days=offset)).date().strftime("%Y%m%d")
+
+def fetch_espn_live():
+    """ESPN 直播赛程, 返回 [{"raw_name": "A vs B"}]"""
     matches = []
-    print("[*] 正在获取比赛列表...")
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page(user_agent=HEADERS['User-Agent'])
-            page.goto(BASE_URL, timeout=12000, wait_until="domcontentloaded")
-            content = page.content()
-            soup = BeautifulSoup(content, "html.parser")
-
-            nba_header = None
-            for span in soup.find_all("span", class_="text-white"):
-                if "nba streams" in span.get_text(strip=True).lower():
-                    nba_header = span
-                    break
-
-            if nba_header:
-                nba_container = nba_header.find_next("div", class_="row")
-                if nba_container:
-                    for a in nba_container.find_all("a", href=True):
-                        text = a.get_text(separator=" ", strip=True)
-                        if "Match Started" in text:
-                            href = a['href']
-                            if href.startswith("/"): href = BASE_URL.rstrip("/") + href
-                            matches.append({"raw_name": text, "url": href})
-
-            browser.close()
-        except Exception as e:
-            print(f"Error fetching home: {e}")
-            pass
+    print("[*] 正在获取比赛列表 (ESPN)...")
+    try:
+        seen = set()
+        for off in (0, -1):  # 美东今天 + 昨天(跨午夜未结束的比赛)
+            ymd = et_ymd(off)
+            url = ("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+                   f"?dates={ymd}")
+            events = requests.get(url, timeout=15).json().get("events", [])
+            for e in events:
+                eid = e.get("id")
+                if eid in seen:
+                    continue
+                seen.add(eid)
+                state = ((e.get("status") or {}).get("type") or {}).get("state")
+                if state != "in":
+                    continue
+                comp = (e.get("competitions") or [{}])[0]
+                teams = {}
+                for c in comp.get("competitors", []):
+                    t = c.get("team", {})
+                    teams[c.get("homeAway")] = t.get("displayName", "")
+                if "away" not in teams or "home" not in teams:
+                    continue
+                matches.append({"raw_name": f"{teams['away']} vs {teams['home']}"})
+    except Exception as ex:
+        print(f"ESPN赛程失败: {ex}")
     return matches
 
 # ================= foxtrend.app 取篮球直播流地址 =================
@@ -364,7 +378,7 @@ def run_with_timeout(func, args, timeout):
         p.terminate()
         p.join()
         try:
-            subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
             subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
         except: pass
         return None
@@ -374,7 +388,7 @@ def process_game(args):
     game, foxtrend_list = args
     team_key, display_name, team1, team2 = parse_teams(game['raw_name'])
 
-    # 混合逻辑：nbabite 取赛程，foxtrend 取流地址
+    # 混合逻辑：ESPN 取赛程，foxtrend 取流地址
     fmatch = match_foxtrend(team1, team2, foxtrend_list)
     if not fmatch:
         print(f"[-] {display_name}: foxtrend无匹配")
@@ -403,12 +417,12 @@ def process_game(args):
 
 def main():
     try:
-        subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
 
         # 提速：两个数据源并行抓
         with ThreadPoolExecutor(max_workers=2) as ex:
-            f1 = ex.submit(fetch_home_matches)
+            f1 = ex.submit(fetch_espn_live)
             f2 = ex.submit(fetch_foxtrend_basketball)
             matches = f1.result()
             foxtrend_list = f2.result()
@@ -442,7 +456,8 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[!] User Interrupted")
-        subprocess.run(["pkill", "-9", "chrome"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "ms-playwright"], stderr=subprocess.DEVNULL)
 
 if __name__ == "__main__":
     main()
+
