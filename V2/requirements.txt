@@ -1,5 +1,5 @@
 flask
 curl_cffi
-playwright
+playwright==1.48.0
 pyvirtualdisplay
 beautifulsoup4
